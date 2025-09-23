@@ -219,45 +219,32 @@ function bufferToBase64(buf: ArrayBuffer | Uint8Array | Buffer) {
   return Buffer.from(new Uint8Array(buf)).toString("base64");
 }
 
-// Hash function for URLs to create cache keys
-function hashUrl(url: string): string {
-  return Bun.hash(url).toString(36);
-}
-
 // Get cached image URL or upload to UploadThing if not cached
 async function getImageUrl(
   originalUrl: string,
   contentType: string,
   utapi?: UTApi,
 ): Promise<string> {
-  const urlHash = hashUrl(originalUrl);
+  // Fetch image data to compute content hash
+  const bytes = await fetchAttachmentBytes(originalUrl);
+  const imageHash = Bun.hash(bytes).toString(36);
 
-  // Check cache first
+  // Check cache first using content hash
   const cached = db
     .query("SELECT uploadthing_url FROM image_cache WHERE url_hash = ?")
-    .get(urlHash) as { uploadthing_url: string } | null;
+    .get(imageHash) as { uploadthing_url: string } | null;
   if (cached) {
     return cached.uploadthing_url;
   }
 
-  // If no UploadThing config, fall back to base64
-  if (!utapi) {
-    const bytes = await fetchAttachmentBytes(originalUrl);
+  // If no UploadThing config, or image is small, return base64
+  const MAX_B64_SIZE = 1 * 1024 * 1024; // 1MB
+  if (!utapi || bytes.length <= MAX_B64_SIZE) {
     const b64 = bufferToBase64(bytes);
     return `data:${contentType};base64,${b64}`;
   }
 
   try {
-    // Fetch image data
-    const bytes = await fetchAttachmentBytes(originalUrl);
-
-    const MAX_B64_SIZE = 1 * 1024 * 1024; // 1MB
-    if (bytes.length <= MAX_B64_SIZE) {
-      // Small enough for base64, don't upload
-      const b64 = bufferToBase64(bytes);
-      return `data:${contentType};base64,${b64}`;
-    }
-
     // Create a File-like object for UploadThing
     const file = new File(
       [bytes],
@@ -278,17 +265,16 @@ async function getImageUrl(
 
     const uploadedUrl = response.data.ufsUrl;
 
-    // Cache the result
+    // Cache the result keyed by content hash
     db.run(
       "INSERT OR REPLACE INTO image_cache (url_hash, original_url, uploadthing_url, created_at) VALUES (?, ?, ?, ?)",
-      [urlHash, originalUrl, uploadedUrl, Date.now()],
+      [imageHash, originalUrl, uploadedUrl, Date.now()],
     );
 
     return uploadedUrl;
   } catch (error) {
     console.error("Error uploading image:", error);
     // Fall back to base64
-    const bytes = await fetchAttachmentBytes(originalUrl);
     const b64 = bufferToBase64(bytes);
     return `data:${contentType};base64,${b64}`;
   }
