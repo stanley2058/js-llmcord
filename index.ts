@@ -18,6 +18,9 @@ import OpenAI from "openai";
 import YAML from "yaml";
 import { readFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
+import { Database } from "bun:sqlite";
+import { UTApi } from "uploadthing/server";
+import { inspect } from "node:util";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -42,6 +45,18 @@ const MAX_MESSAGE_NODES = 500;
 
 const EMBED_COLOR_COMPLETE = Colors.DarkGreen;
 const EMBED_COLOR_INCOMPLETE = Colors.Orange;
+
+const db = new Database("llmcord.db");
+
+// Initialize image cache table
+db.run(`
+  CREATE TABLE IF NOT EXISTS image_cache (
+    url_hash TEXT PRIMARY KEY,
+    original_url TEXT NOT NULL,
+    uploadthing_url TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )
+`);
 
 type RoleType = "user" | "assistant";
 
@@ -84,15 +99,19 @@ type Config = {
   bot_token: string;
   client_id?: string | number | null;
   status_message?: string | null;
+  uploadthing_apikey?: string | null;
   max_text?: number;
   max_images?: number;
   max_messages?: number;
   use_plain_responses?: boolean;
   allow_dms?: boolean;
+  debug_message?: boolean;
   permissions: Permissions;
   providers: Record<string, ProviderConfig>;
   models: Record<string, Record<string, unknown> | undefined>;
   system_prompt?: string | null;
+
+  utapi?: UTApi; // auto derived from uploadthing_apikey
 };
 
 class Lock {
@@ -149,6 +168,14 @@ function nowIsoLike() {
 async function getConfig(filename = "config.yaml"): Promise<Config> {
   const raw = await readFile(filename, { encoding: "utf-8" });
   const parsed = YAML.parse(raw) as Config;
+  if (!parsed.uploadthing_apikey) {
+    parsed.uploadthing_apikey = process.env.UPLOADTHING_TOKEN || null;
+  }
+  if (parsed.uploadthing_apikey) {
+    parsed.utapi = new UTApi({
+      token: parsed.uploadthing_apikey,
+    });
+  }
   return parsed;
 }
 
@@ -192,6 +219,81 @@ function bufferToBase64(buf: ArrayBuffer | Uint8Array | Buffer) {
   return Buffer.from(new Uint8Array(buf)).toString("base64");
 }
 
+// Hash function for URLs to create cache keys
+function hashUrl(url: string): string {
+  return Bun.hash(url).toString(36);
+}
+
+// Get cached image URL or upload to UploadThing if not cached
+async function getImageUrl(
+  originalUrl: string,
+  contentType: string,
+  utapi?: UTApi,
+): Promise<string> {
+  const urlHash = hashUrl(originalUrl);
+
+  // Check cache first
+  const cached = db
+    .query("SELECT uploadthing_url FROM image_cache WHERE url_hash = ?")
+    .get(urlHash) as { uploadthing_url: string } | null;
+  if (cached) {
+    return cached.uploadthing_url;
+  }
+
+  // If no UploadThing config, fall back to base64
+  if (!utapi) {
+    const bytes = await fetchAttachmentBytes(originalUrl);
+    const b64 = bufferToBase64(bytes);
+    return `data:${contentType};base64,${b64}`;
+  }
+
+  try {
+    // Fetch image data
+    const bytes = await fetchAttachmentBytes(originalUrl);
+
+    const MAX_B64_SIZE = 1 * 1024 * 1024; // 1MB
+    if (bytes.length <= MAX_B64_SIZE) {
+      // Small enough for base64, don't upload
+      const b64 = bufferToBase64(bytes);
+      return `data:${contentType};base64,${b64}`;
+    }
+
+    // Create a File-like object for UploadThing
+    const file = new File(
+      [bytes],
+      `image.${contentType.split("/")[1] || "png"}`,
+      { type: contentType },
+    );
+
+    // Upload to UploadThing
+    const response = await utapi.uploadFiles(file);
+    console.log("Uploading image to UploadThing, url:", response.data?.ufsUrl);
+
+    if (response.error) {
+      console.error("UploadThing upload failed:", response.error);
+      // Fall back to base64 even if large
+      const b64 = bufferToBase64(bytes);
+      return `data:${contentType};base64,${b64}`;
+    }
+
+    const uploadedUrl = response.data.ufsUrl;
+
+    // Cache the result
+    db.run(
+      "INSERT OR REPLACE INTO image_cache (url_hash, original_url, uploadthing_url, created_at) VALUES (?, ?, ?, ?)",
+      [urlHash, originalUrl, uploadedUrl, Date.now()],
+    );
+
+    return uploadedUrl;
+  } catch (error) {
+    console.error("Error uploading image:", error);
+    // Fall back to base64
+    const bytes = await fetchAttachmentBytes(originalUrl);
+    const b64 = bufferToBase64(bytes);
+    return `data:${contentType};base64,${b64}`;
+  }
+}
+
 async function ensureCommands() {
   const name = "model";
   const data: RESTPostAPIApplicationCommandsJSONBody = {
@@ -213,7 +315,7 @@ async function ensureCommands() {
   if (!existing) await client.application!.commands.create(data);
 }
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   try {
     await ensureCommands();
   } catch {}
@@ -390,9 +492,9 @@ client.on("messageCreate", async (newMsg) => {
 
   const providerSlashModel = currModel;
   const core = providerSlashModel.replace(/:vision$/i, "");
-  const parts = core.split("/", 2);
-  const provider = parts[0] || "";
-  const model = parts[1] || "";
+  const firstSlash = core.indexOf("/");
+  const provider = core.slice(0, firstSlash);
+  const model = core.slice(firstSlash + 1);
   const providerCfg = config.providers[provider];
   if (!providerCfg) {
     console.error("Provider not found in config for model", providerSlashModel);
@@ -401,6 +503,7 @@ client.on("messageCreate", async (newMsg) => {
   const baseURL = providerCfg.base_url;
   const apiKey = providerCfg.api_key || "sk-no-key-required";
   const openai = new OpenAI({ baseURL, apiKey });
+  console.log(`Using: [${provider}] @ [${baseURL}] w/ [${model}]`);
 
   const modelParameters = config.models[providerSlashModel];
   const extraHeaders = providerCfg.extra_headers || undefined;
@@ -440,7 +543,7 @@ client.on("messageCreate", async (newMsg) => {
 
     const release = await node.lock.acquire();
     try {
-      if (node.text == null) {
+      if (node.text === null) {
         const mention = client.user ? `<@${client.user.id}>` : "";
         const mentionNick = client.user ? `<@!${client.user.id}>` : "";
         let content = currMsg.content || "";
@@ -479,11 +582,14 @@ client.on("messageCreate", async (newMsg) => {
             if (att.contentType!.startsWith("text")) {
               texts.push(await fetchAttachmentText(att.url));
             } else if (att.contentType!.startsWith("image")) {
-              const bytes = await fetchAttachmentBytes(att.url);
-              const b64 = bufferToBase64(bytes);
+              const imageUrl = await getImageUrl(
+                att.url,
+                att.contentType!,
+                config.utapi,
+              );
               images.push({
                 type: "image_url",
-                image_url: { url: `data:${att.contentType};base64,${b64}` },
+                image_url: { url: imageUrl },
               });
             }
           } catch {}
@@ -564,7 +670,14 @@ client.on("messageCreate", async (newMsg) => {
         if (acceptUsernames && node.userId) {
           msg.name = String(node.userId);
         } else if (node.userId) {
-          msg.content = `[name=${node.userId}]: ${msg.content}`;
+          if (typeof msg.content === "string") {
+            msg.content = `[name=${String(node.userId)}]: ${msg.content}`;
+          } else {
+            msg.content = msg.content.map((c) => {
+              if (c.type === "image_url") return c;
+              return { ...c, text: `[name=${String(node.userId)}]: ${c.text}` };
+            });
+          }
         }
         messages.push(msg);
       }
@@ -640,19 +753,21 @@ client.on("messageCreate", async (newMsg) => {
       ...extraBody,
     };
 
+    if (config.debug_message) console.log(inspect(params, true, 10, true));
+
     const stream = await openai.chat.completions.create(params, {
       headers: extraHeaders,
       query: extraQuery,
     } as any);
 
     for await (const chunk of stream as any) {
-      if (finishReason != null) break;
+      if (finishReason !== null) break;
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       finishReason = choice.finish_reason || null;
       const prev = currContent || "";
       currContent = choice.delta?.content || "";
-      const newContent = finishReason == null ? prev : prev + currContent;
+      const newContent = finishReason === null ? prev : prev + currContent;
       if (responseContents.length === 0 && newContent === "") continue;
       const startNext =
         responseContents.length === 0 ||
@@ -667,11 +782,11 @@ client.on("messageCreate", async (newMsg) => {
         const current = responseContents[responseContents.length - 1] ?? "";
         const currDelta = currContent ?? "";
         const msgSplitIncoming =
-          finishReason == null &&
+          finishReason === null &&
           (current + currDelta).length > maxMessageLength;
-        const isFinalEdit = finishReason != null || msgSplitIncoming;
+        const isFinalEdit = finishReason !== null || msgSplitIncoming;
         const isGoodFinish =
-          finishReason != null &&
+          finishReason !== null &&
           ["stop", "end_turn"].includes(String(finishReason).toLowerCase());
         if (startNext || readyToEdit || isFinalEdit) {
           const emb = warnEmbed
@@ -735,9 +850,25 @@ client.on("messageCreate", async (newMsg) => {
   }
 });
 
+// Clean up old cached images (older than 7 days)
+function cleanupImageCache() {
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const deleted = db.run("DELETE FROM image_cache WHERE created_at < ?", [
+    sevenDaysAgo,
+  ]);
+  if (deleted.changes > 0) {
+    console.log(`Cleaned up ${deleted.changes} old cached images`);
+  }
+}
+
 async function main() {
   config = await getConfig();
   currModel = firstModelKey(config);
+
+  // Clean up old cached images on startup and then every 24 hours
+  cleanupImageCache();
+  setInterval(cleanupImageCache, 24 * 60 * 60 * 1000);
+
   await client.login(config.bot_token);
 }
 
