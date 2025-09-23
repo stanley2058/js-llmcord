@@ -7,5 +7,10 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "discord.js": "^14.22.1",
+    "openai": "^5.22.1",
+    "yaml": "^2.8.1"
   }
 }
