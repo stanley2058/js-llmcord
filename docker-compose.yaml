@@ -1,0 +1,10 @@
+services:
+  js-llmcord:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - TZ=UTC # change this if you want to have localized time
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro # your config file
+      - ./data:/app/data # for image cache persistence
