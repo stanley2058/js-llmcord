@@ -237,8 +237,7 @@ async function getImageUrl(
     return cached.uploadthing_url;
   }
 
-  // If no UploadThing config, or image is small, return base64
-  const MAX_B64_SIZE = 1 * 1024 * 1024; // 1MB
+  const MAX_B64_SIZE = 250_000; // Claude treats base64 images as input tokens
   if (!utapi || bytes.length <= MAX_B64_SIZE) {
     const b64 = bufferToBase64(bytes);
     return `data:${contentType};base64,${b64}`;
