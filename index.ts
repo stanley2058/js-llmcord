@@ -46,7 +46,7 @@ const MAX_MESSAGE_NODES = 500;
 const EMBED_COLOR_COMPLETE = Colors.DarkGreen;
 const EMBED_COLOR_INCOMPLETE = Colors.Orange;
 
-const db = new Database("llmcord.db");
+const db = new Database("./data/llmcord.db");
 
 // Initialize image cache table
 db.run(`

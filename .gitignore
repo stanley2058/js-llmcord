@@ -1,6 +1,6 @@
 # dependencies (bun install)
 node_modules
-llmcord.db
+./data/llmcord.db
 config.yaml
 
 # output
