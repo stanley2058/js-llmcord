@@ -858,4 +858,4 @@ async function main() {
   await client.login(config.bot_token);
 }
 
-main().catch(() => {});
+main().catch(console.error);
