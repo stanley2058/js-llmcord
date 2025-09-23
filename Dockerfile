@@ -1,11 +1,11 @@
-FROM oven/bun:1 AS build
-WORKDIR /src
-COPY . .
-RUN bun run build
-
 FROM oven/bun:1
 WORKDIR /app
-COPY --from=build /src/dist/* /app
+
+COPY package.json .
+COPY bun.lock .
+RUN bun install
+
+COPY . .
 RUN mkdir -p /app/data
 
-ENTRYPOINT ["bun", "/app/index.js"]
+ENTRYPOINT ["bun", "/app/index.ts"]

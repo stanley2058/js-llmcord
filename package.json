@@ -2,9 +2,6 @@
   "name": "js-llmcord",
   "module": "index.ts",
   "type": "module",
-  "scripts": {
-    "build": "bun run build.ts"
-  },
   "devDependencies": {
     "@types/bun": "latest"
   },

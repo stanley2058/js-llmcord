@@ -1,0 +1,4 @@
+node_modules
+./data/llmcord.db
+config.yaml
+
