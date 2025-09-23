@@ -237,9 +237,15 @@ async function getImageUrl(
     return cached.uploadthing_url;
   }
 
-  const MAX_B64_SIZE = 250_000; // Claude treats base64 images as input tokens
-  if (!utapi || bytes.length <= MAX_B64_SIZE) {
-    const b64 = bufferToBase64(bytes);
+  // If no UploadThing config, or image is small, return base64
+  const MAX_B64_SIZE = 1 * 1024 * 1024; // 1MB
+  const MAX_B64_LENGTH = 100000; // limit token size, since claude treats this as input token
+  const b64 = bufferToBase64(bytes);
+  const isSmall = bytes.length <= MAX_B64_SIZE && b64.length <= MAX_B64_LENGTH;
+  if (!utapi || isSmall) {
+    console.log(
+      `Using base64 for image, size: ${bytes.length}, b64len: ${b64.length}`,
+    );
     return `data:${contentType};base64,${b64}`;
   }
 
@@ -743,7 +749,8 @@ client.on("messageCreate", async (newMsg) => {
     const stream = await openai.chat.completions.create(params, {
       headers: extraHeaders,
       query: extraQuery,
-    } as any);
+      fetchOptions: { verbose: config.debug_message },
+    });
 
     for await (const chunk of stream as any) {
       if (finishReason !== null) break;
