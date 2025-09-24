@@ -23,9 +23,10 @@ import {
   getProvidersFromConfig,
   parseProviderModelString,
 } from "./model-routing";
-import { streamText, type ModelMessage } from "ai";
+import { stepCountIs, streamText, type ModelMessage } from "ai";
 import { cleanupImageCache, getImageUrl } from "./image";
 import { inspect } from "bun";
+import { ToolManager } from "./tool";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -73,6 +74,7 @@ export class DiscordOperator {
   private curProviderModel: string;
   private msgNodes: Map<string, MsgNode> = new Map();
   private imageCacheCleanupInterval: NodeJS.Timeout;
+  private toolManager: ToolManager;
 
   constructor() {
     this.client = new Client({
@@ -96,14 +98,17 @@ export class DiscordOperator {
       24 * 60 * 60 * 1000,
     );
 
+    this.toolManager = new ToolManager();
+
     this.client.once("clientReady", () => this.clientReady());
     this.client.on("interactionCreate", this.interactionCreate);
     this.client.on("messageCreate", this.messageCreate);
   }
 
-  async login() {
+  async init() {
     const config = getConfig();
     await this.client.login(config.bot_token);
+    await this.toolManager.init();
   }
 
   private async ensureCommands() {
@@ -254,15 +259,20 @@ export class DiscordOperator {
       const toolsDisabledForModel = mappedParams?.tools === false;
       if (mappedParams) delete mappedParams.tools;
 
+      const tools = toolsDisabledForModel
+        ? undefined
+        : await this.toolManager.getTools();
       const { textStream, finishReason } = streamText({
         model: modelInstance,
         messages: messages.reverse(),
         ...(mappedParams
           ? { providerOptions: { [provider]: mappedParams } }
           : {}),
-        // TODO: add tools
+        tools,
+        stopWhen: stepCountIs(config.max_steps ?? 10),
       });
       if (config.debug_message) console.log(inspect(messages));
+      if (config.debug_message) console.log(inspect(tools));
 
       let contentAcc = "";
       let pushedIndex = 0;
@@ -317,6 +327,10 @@ export class DiscordOperator {
       for await (const textPart of textStream) contentAcc += textPart;
       await finishReason;
       done = true;
+
+      if (config.debug_message) {
+        console.log(`Stream finished with reason: ${await finishReason}`);
+      }
 
       if (usePlainResponses) {
         for (const content of responseQueue) {
@@ -547,21 +561,21 @@ export class DiscordOperator {
       } catch (e) {
         console.error(e);
       }
+    }
 
-      console.log(
-        `Message received (user ID: ${msg.author.id}, attachments: ${msg.attachments.size}, conversation length: ${messages.length}):\n${msg.content}`,
-      );
+    console.log(
+      `Message received (user ID: ${msg.author.id}, attachments: ${msg.attachments.size}, conversation length: ${messages.length}):\n${msg.content}`,
+    );
 
-      if (config.system_prompt) {
-        const { date, time } = nowIsoLike();
-        let sys = (config.system_prompt || "")
-          .replace("{date}", date)
-          .replace("{time}", time)
-          .trim();
-        sys +=
-          "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'.";
-        messages.push({ role: "system", content: sys });
-      }
+    if (config.system_prompt) {
+      const { date, time } = nowIsoLike();
+      let sys = (config.system_prompt || "")
+        .replace("{date}", date)
+        .replace("{time}", time)
+        .trim();
+      sys +=
+        "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'.";
+      messages.push({ role: "system", content: sys });
     }
 
     return { messages, userWarnings };

@@ -2,7 +2,7 @@ import { DiscordOperator } from "./src/discord";
 
 const discordOperator = new DiscordOperator();
 async function main() {
-  await discordOperator.login();
+  await discordOperator.init();
 }
 
 process.on("SIGINT", async () => {

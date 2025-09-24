@@ -8,6 +8,7 @@ uploadthing_apikey:
 max_text: 100000
 max_images: 5
 max_messages: 25
+max_steps: 10
 
 use_plain_responses: false
 allow_dms: true
@@ -82,11 +83,12 @@ models:
   ollama/llama4:
 
 tools:
-  mcp_servers:
+  local_mcp:
     fetch:
       command: uvx
       args: ["mcp-server-fetch"]
       env: {}
+  remote_mcp:
 
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.

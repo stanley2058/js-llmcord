@@ -6,6 +6,7 @@ export type Config = {
   max_text?: number;
   max_images?: number;
   max_messages?: number;
+  max_steps: number;
   use_plain_responses?: boolean;
   allow_dms?: boolean;
   debug_message?: boolean;
@@ -27,7 +28,8 @@ export type Config = {
   providers: Record<Providers, ProviderConfig>;
   models: Record<string, Record<string, string | number | boolean> | undefined>;
   tools: {
-    mcp_servers: Record<string, McpServerConfig>;
+    local_mcp: Record<string, LocalMCPConfig>;
+    remote_mcp: Record<string, RemoteMCPConfig>;
   };
   system_prompt?: string | null;
 };
@@ -44,10 +46,17 @@ export type ModelConfig = Record<string, unknown> & {
   use_tools?: boolean; // default to true if tools are configured
 };
 
-export type McpServerConfig = {
+export type LocalMCPConfig = {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
+};
+
+export type RemoteMCPConfig = {
+  type: "http" | "sse";
+  url: string;
+  opts?: Record<string, string | number | boolean>;
 };
 
 export type Providers =
