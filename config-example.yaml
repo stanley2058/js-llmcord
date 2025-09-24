@@ -67,6 +67,9 @@ models:
     reasoning_effort: high
     verbosity: medium
 
+  openai/gpt-5-chat-latest:
+    tools: false
+
   x-ai/grok-4:
     search_parameters:
       mode: auto

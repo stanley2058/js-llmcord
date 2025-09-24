@@ -2,6 +2,7 @@
 node_modules
 ./data/llmcord.db
 config.yaml
+mcp.json
 
 # output
 out
