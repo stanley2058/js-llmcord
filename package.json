@@ -9,9 +9,16 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.18",
+    "@ai-sdk/openai": "^2.0.34",
+    "@ai-sdk/openai-compatible": "^1.0.18",
+    "@ai-sdk/xai": "^2.0.22",
+    "@openrouter/ai-sdk-provider": "^1.2.0",
+    "ai": "^5.0.51",
     "discord.js": "^14.22.1",
     "openai": "^5.22.1",
     "uploadthing": "^7.7.4",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "^4.1.11"
   }
 }

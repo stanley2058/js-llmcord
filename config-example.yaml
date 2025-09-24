@@ -1,7 +1,7 @@
 # Discord settings:
 
 bot_token: 
-client_id: 
+client_id: "123456789"
 status_message: 
 uploadthing_apikey: 
 
@@ -15,7 +15,7 @@ debug_message: false
 
 permissions:
   users:
-    admin_ids: []
+    admin_ids: ["123456789"]
     allowed_ids: []
     blocked_ids: []
   roles:
@@ -80,6 +80,13 @@ models:
   openrouter/anthropic/claude-sonnet-4:
 
   ollama/llama4:
+
+tools:
+  mcp_servers:
+    fetch:
+      command: uvx
+      args: ["mcp-server-fetch"]
+      env: {}
 
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.

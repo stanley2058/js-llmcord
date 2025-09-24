@@ -1,0 +1,58 @@
+export type Config = {
+  bot_token: string;
+  client_id?: string | number | null;
+  status_message?: string | null;
+  uploadthing_apikey?: string | null;
+  max_text?: number;
+  max_images?: number;
+  max_messages?: number;
+  use_plain_responses?: boolean;
+  allow_dms?: boolean;
+  debug_message?: boolean;
+  permissions: {
+    users: {
+      admin_ids: Array<string | number>;
+      allowed_ids: Array<string | number>;
+      blocked_ids: Array<string | number>;
+    };
+    roles: {
+      allowed_ids: Array<string | number>;
+      blocked_ids: Array<string | number>;
+    };
+    channels: {
+      allowed_ids: Array<string | number>;
+      blocked_ids: Array<string | number>;
+    };
+  };
+  providers: Record<Providers, ProviderConfig>;
+  models: Record<string, Record<string, string | number | boolean> | undefined>;
+  tools: {
+    mcp_servers: Record<string, McpServerConfig>;
+  };
+  system_prompt?: string | null;
+};
+
+export type ProviderConfig = {
+  base_url: string;
+  api_key?: string;
+  extra_headers?: Record<string, string>;
+  extra_query?: Record<string, string>;
+  extra_body?: Record<string, unknown>;
+};
+
+export type ModelConfig = Record<string, unknown> & {
+  use_tools?: boolean; // default to true if tools are configured
+};
+
+export type McpServerConfig = {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
+export type Providers =
+  | "openai"
+  | "x-ai"
+  | "openrouter"
+  | "anthropic"
+  | (string & {});

@@ -1,6 +1,6 @@
 # dependencies (bun install)
 node_modules
-./data/llmcord.db
+data/llmcord.db
 config.yaml
 mcp.json
 
