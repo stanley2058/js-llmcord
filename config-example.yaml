@@ -89,6 +89,11 @@ tools:
       args: ["mcp-server-fetch"]
       env: {}
   remote_mcp:
+    context7:
+      type: "http"
+      url: https://mcp.context7.com/mcp
+      headers:
+        CONTEXT7_API_KEY: 
 
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.
