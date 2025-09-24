@@ -13,6 +13,7 @@ import {
   type RESTPostAPIApplicationCommandsJSONBody,
   InteractionType,
   ComponentType,
+  MessageFlags,
 } from "discord.js";
 import OpenAI from "openai";
 import YAML from "yaml";
@@ -316,9 +317,9 @@ client.once("clientReady", async () => {
   try {
     // Cast to any to allow Custom status with state in v14 types
     client.user?.setPresence({
-      activities: [{ type: ActivityType.Custom, state: status } as any],
+      activities: [{ type: ActivityType.Custom, state: status, name: status }],
       status: "online",
-    } as any);
+    });
   } catch {}
   const clientId = config.client_id ? String(config.client_id) : "";
   if (clientId) {
@@ -374,7 +375,10 @@ client.on("interactionCreate", async (interaction) => {
     } else {
       output = "You don't have permission to change the model.";
     }
-    await interaction.reply({ content: output, ephemeral: isDM });
+    await interaction.reply({
+      content: output,
+      flags: isDM ? MessageFlags.Ephemeral : undefined,
+    });
   }
 });
 
