@@ -4,7 +4,7 @@ import type { Config } from "./type";
 let utApiInitToken: string | null = null;
 let utApi: UTApi | null = null;
 export async function getConfig() {
-  const configPlain = await Bun.file("./config.json").text();
+  const configPlain = await Bun.file("./config.yaml").text();
   const config = Bun.YAML.parse(configPlain) as Config;
 
   const utToken =
