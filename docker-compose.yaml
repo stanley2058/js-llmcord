@@ -7,4 +7,5 @@ services:
       - TZ=UTC # change this if you want to have localized time
     volumes:
       - ./config.yaml:/app/config.yaml:ro # your config file
+      #- ./config:/app/config # mount the whole folder to allow hot reloading
       - ./data:/app/data # for image cache persistence

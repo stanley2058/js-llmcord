@@ -1,8 +1,9 @@
 # dependencies (bun install)
 node_modules
 data/llmcord.db
+config/*
+!config/.gitkeep
 config.yaml
-mcp.json
 
 # output
 out

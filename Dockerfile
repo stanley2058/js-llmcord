@@ -19,5 +19,7 @@ RUN bun install
 
 COPY . .
 RUN mkdir -p /app/data
+RUN mkdir -p /app/config
+RUN ln -s /app/config/config.yaml /app/config.yaml
 
 ENTRYPOINT ["bun", "/app/index.ts"]
