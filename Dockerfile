@@ -8,4 +8,4 @@ RUN bun install
 COPY . .
 RUN mkdir -p /app/data
 
-ENTRYPOINT ["bun", "/app/index.ts"]
+ENTRYPOINT ["bun", "--hot", "/app/index.ts"]
