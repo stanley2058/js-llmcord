@@ -1,4 +1,16 @@
-FROM oven/bun:1
+FROM oven/bun:1 AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  python3 python3-venv python3-pip ca-certificates \
+  python-is-python3
+
+RUN rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --break-system-packages uv
+
+FROM builder
 WORKDIR /app
 
 COPY package.json .
@@ -8,4 +20,4 @@ RUN bun install
 COPY . .
 RUN mkdir -p /app/data
 
-ENTRYPOINT ["bun", "--hot", "/app/index.ts"]
+ENTRYPOINT ["bun", "/app/index.ts"]
