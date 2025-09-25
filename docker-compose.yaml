@@ -1,6 +1,6 @@
 services:
   js-llmcord:
-    build: .
+    image: ghcr.io/stanley2058/js-llmcord:latest
     network_mode: host
     restart: unless-stopped
     environment:
