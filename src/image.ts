@@ -54,8 +54,8 @@ export async function getImageUrl(
 
     // Cache the result keyed by content hash
     db.run(
-      "INSERT OR REPLACE INTO image_cache (url_hash, original_url, uploadthing_url, created_at) VALUES (?, ?, ?, ?)",
-      [imageHash, originalUrl, uploadedUrl, Date.now()],
+      "INSERT OR REPLACE INTO image_cache (url_hash, original_url, uploadthing_id, uploadthing_url, created_at) VALUES (?, ?, ?, ?, ?)",
+      [imageHash, originalUrl, response.data.key, uploadedUrl, Date.now()],
     );
 
     return uploadedUrl;
@@ -67,8 +67,22 @@ export async function getImageUrl(
   }
 }
 
-export function cleanupImageCache() {
+export async function cleanupImageCache() {
+  const config = await getConfig();
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const toDelete = db
+    .query("SELECT uploadthing_id FROM image_cache WHERE created_at < ?")
+    .all(sevenDaysAgo) as { uploadthing_id: string }[];
+
+  if (config.utApi) {
+    try {
+      await config.utApi.deleteFiles(toDelete.map((d) => d.uploadthing_id));
+    } catch (e) {
+      console.error("Error deleting from UploadThing:", e);
+      return;
+    }
+  }
+
   const deleted = db.run("DELETE FROM image_cache WHERE created_at < ?", [
     sevenDaysAgo,
   ]);

@@ -90,9 +90,9 @@ export class DiscordOperator {
       partials: [Partials.Channel],
     });
 
-    cleanupImageCache();
+    cleanupImageCache().catch(console.error);
     this.imageCacheCleanupInterval = setInterval(
-      cleanupImageCache,
+      () => cleanupImageCache().catch(console.error),
       24 * 60 * 60 * 1000,
     );
 

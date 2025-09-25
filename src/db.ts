@@ -8,6 +8,7 @@ db.run(`
   CREATE TABLE IF NOT EXISTS image_cache (
     url_hash TEXT PRIMARY KEY,
     original_url TEXT NOT NULL,
+    uploadthing_id TEXT NOT NULL,
     uploadthing_url TEXT NOT NULL,
     created_at INTEGER NOT NULL
   )
