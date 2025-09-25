@@ -1,9 +1,12 @@
 import { UTApi } from "uploadthing/server";
-import config from "../config.yaml";
+import type { Config } from "./type";
 
 let utApiInitToken: string | null = null;
 let utApi: UTApi | null = null;
-export function getConfig() {
+export async function getConfig() {
+  const configPlain = await Bun.file("./config.json").text();
+  const config = Bun.YAML.parse(configPlain) as Config;
+
   const utToken =
     config.uploadthing_apikey || process.env.UPLOADTHING_TOKEN || null;
 

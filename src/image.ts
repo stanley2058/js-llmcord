@@ -5,7 +5,7 @@ export async function getImageUrl(
   originalUrl: string,
   contentType: string,
 ): Promise<string> {
-  const config = getConfig();
+  const config = await getConfig();
 
   // Fetch image data to compute content hash
   const bytes = await fetchAttachmentBytes(originalUrl);

@@ -10,7 +10,7 @@ export class ToolManager {
   private mcps: Record<string, MCPClient> = {};
 
   async init() {
-    const { tools } = getConfig();
+    const { tools } = await getConfig();
 
     for (const [name, config] of Object.entries(tools.local_mcp)) {
       const client = await createMCPClient({

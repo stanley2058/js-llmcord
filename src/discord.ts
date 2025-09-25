@@ -27,6 +27,7 @@ import { stepCountIs, streamText, type ModelMessage } from "ai";
 import { cleanupImageCache, getImageUrl } from "./image";
 import { inspect } from "bun";
 import { ToolManager } from "./tool";
+import type { Config } from "./type";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -71,10 +72,11 @@ type JSONLike =
 
 export class DiscordOperator {
   private client: Client;
-  private curProviderModel: string;
+  private curProviderModel = "openai/gpt-4o";
   private msgNodes: Map<string, MsgNode> = new Map();
   private imageCacheCleanupInterval: NodeJS.Timeout;
   private toolManager: ToolManager;
+  private cachedConfig: Config = {} as Config;
 
   constructor() {
     this.client = new Client({
@@ -87,10 +89,6 @@ export class DiscordOperator {
       ],
       partials: [Partials.Channel],
     });
-
-    const config = getConfig();
-    this.curProviderModel =
-      Object.keys(config.models || {})[0] ?? "openai/gpt-4o";
 
     cleanupImageCache();
     this.imageCacheCleanupInterval = setInterval(
@@ -106,12 +104,17 @@ export class DiscordOperator {
   }
 
   async init() {
-    const config = getConfig();
+    const config = await getConfig();
+    this.cachedConfig = config;
+    this.curProviderModel =
+      Object.keys(config.models || {})[0] ?? "openai/gpt-4o";
+
     await this.client.login(config.bot_token);
     await this.toolManager.init();
   }
 
   private async ensureCommands() {
+    this.cachedConfig = await getConfig();
     if (!this.client.application) throw new Error("Client not initialized");
     const name = "model";
     const data: RESTPostAPIApplicationCommandsJSONBody = {
@@ -134,15 +137,17 @@ export class DiscordOperator {
   }
 
   private async clientReady() {
+    this.cachedConfig = await getConfig();
     await this.ensureCommands();
-    const config = getConfig();
-    const status = (config.status_message || "").slice(0, 128);
+    const status = (this.cachedConfig.status_message || "").slice(0, 128);
 
     this.client.user?.setPresence({
       activities: [{ type: ActivityType.Custom, state: status, name: status }],
       status: "online",
     });
-    const clientId = config.client_id ? String(config.client_id) : "";
+    const clientId = this.cachedConfig.client_id
+      ? String(this.cachedConfig.client_id)
+      : "";
     if (clientId) {
       console.log(
         `\n\nBOT INVITE URL:\nhttps://discord.com/oauth2/authorize?client_id=${clientId}&permissions=412317191168&scope=bot\n`,
@@ -151,7 +156,7 @@ export class DiscordOperator {
   }
 
   private interactionCreate = async (interaction: Interaction<CacheType>) => {
-    const config = getConfig();
+    this.cachedConfig = await getConfig();
 
     if (interaction.type === InteractionType.ApplicationCommandAutocomplete) {
       const focused = interaction.options.getFocused(true);
@@ -163,7 +168,7 @@ export class DiscordOperator {
           const choices: Array<{ name: string; value: string }> = [];
           if (curr.toLowerCase().includes(currStr))
             choices.push({ name: `◉ ${curr} (current)`, value: curr });
-          for (const m of Object.keys(config.models || {})) {
+          for (const m of Object.keys(this.cachedConfig.models || {})) {
             if (m === curr) continue;
             if (!m.toLowerCase().includes(currStr)) continue;
             choices.push({ name: `○ ${m}`, value: m });
@@ -186,7 +191,7 @@ export class DiscordOperator {
     if (interaction.commandName === "model") {
       const model = interaction.options.getString("model", true);
       const isDM = interaction.channel?.type === ChannelType.DM;
-      const adminIds = decodeIds(config.permissions.users.admin_ids);
+      const adminIds = decodeIds(this.cachedConfig.permissions.users.admin_ids);
       const userIsAdmin = adminIds.has(interaction.user.id);
       let output = "";
 
@@ -212,6 +217,7 @@ export class DiscordOperator {
   };
 
   private messageCreate = async (msg: Message) => {
+    this.cachedConfig = await getConfig();
     // prevent infinite loop
     if (msg.author.bot) return;
     const isDM = msg.channel.type === ChannelType.DM;
@@ -225,19 +231,18 @@ export class DiscordOperator {
     });
     if (!canRespond) return;
     const { provider, model } = parseProviderModelString(this.curProviderModel);
-    const providers = getProvidersFromConfig();
+    const providers = await getProvidersFromConfig();
     if (!providers[provider]) {
       console.error(`Configuration not found for provider: ${provider}`);
       return;
     }
     console.log(`Using: [${provider}] w/ [${model}]`);
     const modelInstance = providers[provider]!(model);
-    const config = getConfig();
-    const params = config.models[this.curProviderModel];
+    const params = this.cachedConfig.models[this.curProviderModel];
     const mappedParams = params ? keysToCamel(params) : null;
     const { messages, userWarnings } = await this.buildMessages(msg);
 
-    const usePlainResponses = config.use_plain_responses ?? false;
+    const usePlainResponses = this.cachedConfig.use_plain_responses ?? false;
     const maxMessageLength = usePlainResponses
       ? 4000
       : 4096 - STREAMING_INDICATOR.length;
@@ -269,10 +274,10 @@ export class DiscordOperator {
           ? { providerOptions: { [provider]: mappedParams } }
           : {}),
         tools,
-        stopWhen: stepCountIs(config.max_steps ?? 10),
+        stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
       });
-      if (config.debug_message) console.log(inspect(messages));
-      if (config.debug_message) console.log(inspect(tools));
+      if (this.cachedConfig.debug_message) console.log(inspect(messages));
+      if (this.cachedConfig.debug_message) console.log(inspect(tools));
 
       let contentAcc = "";
       let pushedIndex = 0;
@@ -328,7 +333,7 @@ export class DiscordOperator {
       await finishReason;
       done = true;
 
-      if (config.debug_message) {
+      if (this.cachedConfig.debug_message) {
         console.log(`Stream finished with reason: ${await finishReason}`);
       }
 
@@ -381,16 +386,15 @@ export class DiscordOperator {
   }
 
   private async buildMessages(msg: Message) {
-    const config = getConfig();
     const visionModels = (VISION_MODEL_TAGS as readonly string[]).concat(
-      config.additional_vision_models || [],
+      this.cachedConfig.additional_vision_models || [],
     );
     const acceptImages = visionModels.some((t) =>
       this.curProviderModel.toLowerCase().includes(t),
     );
-    const maxText = config.max_text ?? 100000;
-    const maxImages = acceptImages ? (config.max_images ?? 5) : 0;
-    const maxMessages = config.max_messages ?? 25;
+    const maxText = this.cachedConfig.max_text ?? 100000;
+    const maxImages = acceptImages ? (this.cachedConfig.max_images ?? 5) : 0;
+    const maxMessages = this.cachedConfig.max_messages ?? 25;
 
     const messages: ModelMessage[] = [];
     const userWarnings = new Set<string>();
@@ -570,9 +574,9 @@ export class DiscordOperator {
       `Message received (user ID: ${msg.author.id}, attachments: ${msg.attachments.size}, conversation length: ${messages.length}):\n${msg.content}`,
     );
 
-    if (config.system_prompt) {
+    if (this.cachedConfig.system_prompt) {
       const { date, time } = nowIsoLike();
-      let sys = (config.system_prompt || "")
+      let sys = (this.cachedConfig.system_prompt || "")
         .replace("{date}", date)
         .replace("{time}", time)
         .trim();
@@ -617,20 +621,19 @@ export class DiscordOperator {
     roleIds: Set<string>;
     channelIds: Set<string>;
   }) {
-    const config = getConfig();
-    const allowDMs = config.allow_dms ?? true;
+    const allowDMs = this.cachedConfig.allow_dms ?? true;
 
     const {
       admin_ids: adminIds,
       allowed_ids: allowedUserIds,
       blocked_ids: blockedUserIds,
-    } = config.permissions.users;
+    } = this.cachedConfig.permissions.users;
 
     const { allowed_ids: allowedRoleIds, blocked_ids: blockedRoleIds } =
-      config.permissions.roles;
+      this.cachedConfig.permissions.roles;
 
     const { allowed_ids: allowedChannelIds, blocked_ids: blockedChannelIds } =
-      config.permissions.channels;
+      this.cachedConfig.permissions.channels;
 
     const userIsAdmin = adminIds.includes(messageAuthorId);
     if (userIsAdmin) return true;

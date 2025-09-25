@@ -9,8 +9,8 @@ import {
 } from "@ai-sdk/openai-compatible";
 import type { Providers } from "./type";
 
-export function getProvidersFromConfig() {
-  const config = getConfig();
+export async function getProvidersFromConfig() {
+  const config = await getConfig();
   const preConfigurable = ["openai", "x-ai", "anthropic", "openrouter"];
   const openaiCompatibleProviders = Object.keys(config.providers).filter(
     (p) => !preConfigurable.includes(p),
