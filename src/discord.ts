@@ -238,8 +238,6 @@ export class DiscordOperator {
     }
     console.log(`Using: [${provider}] w/ [${model}]`);
     const modelInstance = providers[provider]!(model);
-    const params = this.cachedConfig.models[this.curProviderModel];
-    const mappedParams = params ? keysToCamel(params) : null;
     const { messages, userWarnings } = await this.buildMessages(msg);
 
     const usePlainResponses = this.cachedConfig.use_plain_responses ?? false;
@@ -261,8 +259,19 @@ export class DiscordOperator {
       if ("sendTyping" in msg.channel) await msg.channel.sendTyping();
 
       // Decide if tools should be enabled for this model
-      const toolsDisabledForModel = mappedParams?.tools === false;
-      if (mappedParams) delete mappedParams.tools;
+      const params = this.cachedConfig.models[this.curProviderModel];
+      const {
+        tools: useTools,
+        temperature,
+        max_tokens,
+        top_p,
+        top_k,
+        ...rest
+      } = params ?? {};
+      const toolsDisabledForModel = useTools === false;
+      const restPart = params
+        ? { providerOptions: { [provider]: keysToCamel(rest) } }
+        : {};
 
       const tools = toolsDisabledForModel
         ? undefined
@@ -270,9 +279,12 @@ export class DiscordOperator {
       const { textStream, finishReason } = streamText({
         model: modelInstance,
         messages: messages.reverse(),
-        ...(mappedParams
-          ? { providerOptions: { [provider]: mappedParams } }
-          : {}),
+        maxOutputTokens:
+          typeof max_tokens === "number" ? max_tokens : undefined,
+        temperature: typeof temperature === "number" ? temperature : undefined,
+        topP: typeof top_p === "number" ? top_p : undefined,
+        topK: typeof top_k === "number" ? top_k : undefined,
+        ...restPart,
         tools,
         stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
       });
