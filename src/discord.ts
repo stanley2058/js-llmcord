@@ -382,7 +382,10 @@ export class DiscordOperator {
 
   private async buildMessages(msg: Message) {
     const config = getConfig();
-    const acceptImages = VISION_MODEL_TAGS.some((t) =>
+    const visionModels = (VISION_MODEL_TAGS as readonly string[]).concat(
+      config.additional_vision_models || [],
+    );
+    const acceptImages = visionModels.some((t) =>
       this.curProviderModel.toLowerCase().includes(t),
     );
     const maxText = config.max_text ?? 100000;

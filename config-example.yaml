@@ -28,6 +28,7 @@ permissions:
 
 
 # LLM settings:
+additional_vision_models: []
 
 providers:
   # Remote providers:

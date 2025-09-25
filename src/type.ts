@@ -25,6 +25,7 @@ export type Config = {
       blocked_ids: Array<string | number>;
     };
   };
+  additional_vision_models?: Array<string>;
   providers: Record<Providers, ProviderConfig>;
   models: Record<string, Record<string, string | number | boolean> | undefined>;
   tools: {
