@@ -10,9 +10,9 @@ export class ToolManager {
   private mcps: Record<string, MCPClient> = {};
 
   async init() {
-    const { tools } = await getConfig();
+    const { tools = {} } = await getConfig();
 
-    for (const [name, config] of Object.entries(tools.local_mcp)) {
+    for (const [name, config] of Object.entries(tools.local_mcp || {})) {
       const client = await createMCPClient({
         transport: new StdioClientTransport(config),
       });
@@ -20,7 +20,7 @@ export class ToolManager {
       this.mcps[`local_${name}`] = client;
     }
 
-    for (const [name, config] of Object.entries(tools.remote_mcp)) {
+    for (const [name, config] of Object.entries(tools.remote_mcp || {})) {
       switch (config.type) {
         case "http": {
           const { url, opts } = config;

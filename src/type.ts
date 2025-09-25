@@ -28,9 +28,9 @@ export type Config = {
   additional_vision_models?: Array<string>;
   providers: Record<Providers, ProviderConfig>;
   models: Record<string, Record<string, string | number | boolean> | undefined>;
-  tools: {
-    local_mcp: Record<string, LocalMCPConfig>;
-    remote_mcp: Record<string, RemoteMCPConfig>;
+  tools?: {
+    local_mcp?: Record<string, LocalMCPConfig>;
+    remote_mcp?: Record<string, RemoteMCPConfig>;
   };
   system_prompt?: string | null;
 };
