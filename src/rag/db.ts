@@ -10,7 +10,7 @@ export async function pg() {
 
   sql = new SQL(config.rag.postgres_uri);
 
-  await sql`
+  await sql.unsafe(`
     -- Enable required extensions (safe to run repeatedly)
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
     CREATE EXTENSION IF NOT EXISTS vector;
@@ -63,7 +63,7 @@ export async function pg() {
     CREATE INDEX IF NOT EXISTS embeddings_summary_trgm_idx
       ON embeddings
       USING gin (summary gin_trgm_ops);
-  `;
+  `);
 
   return sql;
 }
