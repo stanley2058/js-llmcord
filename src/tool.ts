@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 import { getConfig } from "./config-parser";
 import { getRagTools } from "./rag/embedding";
+import { pg } from "./rag/db";
 
 export type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
 
@@ -55,6 +56,9 @@ export class ToolManager {
     if (rag?.enable) {
       console.log("[RAG] register RAG tools");
       this.ragTools = getRagTools();
+
+      console.log("[RAG] ensure table");
+      await pg();
     }
   }
 
