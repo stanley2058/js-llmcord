@@ -87,6 +87,7 @@ export async function insertEmbeddings(
     type: "intent" | "fact" | "preference";
     summary: string;
     relevance: number;
+    memo?: string;
   }[],
 ) {
   const config = await getConfig();
@@ -114,12 +115,14 @@ export async function insertEmbeddings(
         INSERT INTO embeddings (
           user_id,
           summary,
+          memo,
           type,
           relevance,
           embedding
         ) VALUES (
           ${userId},
           ${e.summary},
+          ${e.memo || ""},
           ${e.type},
           ${e.relevance},
           ${embedding}
@@ -167,6 +170,12 @@ export function getRagTools() {
                 .min(0)
                 .max(1)
                 .describe("relevance of the information, between 0 and 1"),
+              memo: z
+                .string()
+                .optional()
+                .describe(
+                  "(optional) add additional note for this entry, no length or writing style limit, this field will not be used by the embedding engine",
+                ),
             }),
           )
           .describe(
@@ -222,6 +231,7 @@ export function getRagTools() {
           type: r.type,
           similarity: r.cos_sim,
           relevance: r.relevance,
+          memo: r.memo,
           created_at: r.created_at,
         }));
       },

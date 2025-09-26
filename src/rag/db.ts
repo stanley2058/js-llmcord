@@ -21,6 +21,7 @@ export async function pg() {
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       user_id TEXT NOT NULL,
       summary TEXT,
+      memo TEXT,
       type TEXT NOT NULL CHECK (type IN ('intent', 'fact', 'preference')),
       relevance REAL NOT NULL CHECK (relevance >= 0 AND relevance <= 1),
       embedding VECTOR(1536) NOT NULL,
