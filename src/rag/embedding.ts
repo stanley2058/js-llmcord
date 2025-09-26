@@ -46,11 +46,11 @@ export async function findRelevantContent(
       WITH ranked AS (
         SELECT
           e.*,
-          e.embedding <=> ${embedding} AS dist
+          e.embedding <=> ${embedding}::vector AS dist
         FROM embeddings e
         WHERE e.user_id = ${userId}
           AND e.type = ${type}
-          AND e.embedding <=> ${embedding} <= (1 - ${simThreshold})
+          AND e.embedding <=> ${embedding}::vector <= (1 - ${simThreshold})
       )
       SELECT
         r.*,
@@ -64,10 +64,10 @@ export async function findRelevantContent(
       WITH ranked AS (
         SELECT
           e.*,
-          e.embedding <=> ${embedding} AS dist
+          e.embedding <=> ${embedding}::vector AS dist
         FROM embeddings e
         WHERE e.user_id = ${userId}
-          AND e.embedding <=> ${embedding} <= (1 - ${simThreshold})
+          AND e.embedding <=> ${embedding}::vector <= (1 - ${simThreshold})
       )
       SELECT
         r.*,
@@ -125,7 +125,7 @@ export async function insertEmbeddings(
           ${e.memo || ""},
           ${e.type},
           ${e.relevance},
-          ${embedding}
+          ${embedding}::vector
         )
       `;
     }
