@@ -38,6 +38,7 @@ export async function findRelevantContent(
     });
 
   const embedding = embeddings[0]!;
+  const vecLiteral = `[${embedding.join(",")}]`;
 
   const sql = await pg();
   let results: RagEmbedding[];
@@ -46,11 +47,11 @@ export async function findRelevantContent(
       WITH ranked AS (
         SELECT
           e.*,
-          e.embedding <=> ${embedding}::vector AS dist
+          e.embedding <=> ${vecLiteral}::vector AS dist
         FROM embeddings e
         WHERE e.user_id = ${userId}
           AND e.type = ${type}
-          AND e.embedding <=> ${embedding}::vector <= (1 - ${simThreshold})
+          AND e.embedding <=> ${vecLiteral}::vector <= (1 - ${simThreshold})
       )
       SELECT
         r.*,
@@ -64,10 +65,10 @@ export async function findRelevantContent(
       WITH ranked AS (
         SELECT
           e.*,
-          e.embedding <=> ${embedding}::vector AS dist
+          e.embedding <=> ${vecLiteral}::vector AS dist
         FROM embeddings e
         WHERE e.user_id = ${userId}
-          AND e.embedding <=> ${embedding}::vector <= (1 - ${simThreshold})
+          AND e.embedding <=> ${vecLiteral}::vector <= (1 - ${simThreshold})
       )
       SELECT
         r.*,
@@ -111,6 +112,7 @@ export async function insertEmbeddings(
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i]!;
       const embedding = embeddings[i]!;
+      const vecLiteral = `[${embedding.join(",")}]`;
       await tx`
         INSERT INTO embeddings (
           user_id,
@@ -125,7 +127,7 @@ export async function insertEmbeddings(
           ${e.memo || ""},
           ${e.type},
           ${e.relevance},
-          ${embedding}::vector
+          ${vecLiteral}::vector
         )
       `;
     }
