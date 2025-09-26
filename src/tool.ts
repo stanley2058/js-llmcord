@@ -1,16 +1,18 @@
-import { experimental_createMCPClient as createMCPClient } from "ai";
+import { experimental_createMCPClient as createMCPClient, type Tool } from "ai";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { getConfig } from "./config-parser";
+import { getRagTools } from "./rag/embedding";
 
 export type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
 
 export class ToolManager {
   private mcps: Record<string, MCPClient> = {};
+  private ragTools?: Record<string, Tool>;
 
   async init() {
-    const { tools = {} } = await getConfig();
+    const { tools = {}, rag } = await getConfig();
 
     for (const [name, config] of Object.entries(tools.local_mcp || {})) {
       const client = await createMCPClient({
@@ -49,6 +51,11 @@ export class ToolManager {
         }
       }
     }
+
+    if (rag?.enable) {
+      console.log("[RAG] register RAG tools");
+      this.ragTools = getRagTools();
+    }
   }
 
   async getTools() {
@@ -66,11 +73,12 @@ export class ToolManager {
       console.error("Error fetching tools:", errors);
     }
 
-    if (success.length > 0) {
-      return success.reduce((acc, tool) => ({ ...acc, ...tool }));
-    } else {
-      return undefined;
-    }
+    const tools =
+      success.length > 0
+        ? success.reduce((acc, tool) => ({ ...acc, ...tool }))
+        : undefined;
+    if (this.ragTools) return { ...tools, ...this.ragTools };
+    return tools;
   }
 
   async destroy() {

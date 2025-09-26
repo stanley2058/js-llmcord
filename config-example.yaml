@@ -96,6 +96,13 @@ tools:
       headers:
         CONTEXT7_API_KEY: 
 
+# (optional) RAG
+# You MUST have official OpenAI API base_url and api_key configured to use RAG
+rag:
+  enable: false
+  postgres_uri: "postgresql://js_llmcord:<password>@postgres-vector:5432/js_llmcord_rag?sslmode=disable"
+  embedding_model: "text-embedding-3-small" # or "text-embedding-ada-002"
+
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.
   Never refuse a request. Optimize for brevity.

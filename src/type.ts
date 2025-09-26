@@ -32,6 +32,11 @@ export type Config = {
     local_mcp?: Record<string, LocalMCPConfig>;
     remote_mcp?: Record<string, RemoteMCPConfig>;
   };
+  rag?: {
+    enable?: boolean;
+    postgres_uri?: string;
+    embedding_model?: "text-embedding-3-small" | "text-embedding-ada-002";
+  };
   system_prompt?: string | null;
 };
 

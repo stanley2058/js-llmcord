@@ -4,8 +4,19 @@ services:
     network_mode: host
     restart: unless-stopped
     environment:
-      - TZ=UTC # change this if you want to have localized time
+      TZ: "UTC" # change this if you want to have localized time
     volumes:
       - ./config.yaml:/app/config.yaml:ro # your config file
       #- ./config:/app/config # mount the whole folder to allow hot reloading
       - ./data:/app/data # for image cache persistence
+  # enable postgres for RAG
+  postgres-vector:
+    image: pgvector/pgvector:pg18-trixie
+    restart: unless-stopped
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data
+    environment:
+      TZ: "UTC"
+      POSTGRES_USER: "js_llmcord"
+      POSTGRES_PASSWORD: "<password>"
+      POSTGRES_DB: "js_llmcord_rag"
