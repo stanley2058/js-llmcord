@@ -10,13 +10,11 @@ export async function pg() {
 
   sql = new SQL(config.rag.postgres_uri);
 
-  await sql.unsafe(`
-    -- Enable required extensions (safe to run repeatedly)
-    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-    CREATE EXTENSION IF NOT EXISTS vector;
-    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
+  await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+  await sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`;
 
-    -- embeddings table
+  await sql`
     CREATE TABLE IF NOT EXISTS embeddings (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
       user_id TEXT NOT NULL,
@@ -26,44 +24,47 @@ export async function pg() {
       relevance REAL NOT NULL CHECK (relevance >= 0 AND relevance <= 1),
       embedding VECTOR(1536) NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
+    )
+  `;
 
-    -- Useful indexes
+  await sql`CREATE INDEX IF NOT EXISTS embeddings_type_idx ON embeddings (type)`;
 
-    -- Filter by type quickly (optional but cheap)
-    CREATE INDEX IF NOT EXISTS embeddings_type_idx
-      ON embeddings (type);
-
-    -- If you frequently query by recent items
+  await sql`
     CREATE INDEX IF NOT EXISTS embeddings_created_at_idx
-      ON embeddings (created_at);
+    ON embeddings (created_at)
+  `;
 
-    -- ANN search on embeddings using HNSW (pgvector >= 0.5)
-    -- Adjust m / ef_construction based on data size and latency needs
+  await sql`
     CREATE INDEX IF NOT EXISTS embeddings_embedding_hnsw_idx
-      ON embeddings
-      USING hnsw (embedding vector_cosine_ops)
-      WITH (m = 16, ef_construction = 200);
+    ON embeddings
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 200)
+  `;
 
-    -- Optional: partial HNSW indexes per type if you often search within one type
-    -- (keeps graphs smaller and queries faster)
+  await sql`
     CREATE INDEX IF NOT EXISTS embeddings_embedding_hnsw_intent_idx
-      ON embeddings USING hnsw (embedding vector_cosine_ops)
-      WHERE type = 'intent';
+    ON embeddings USING hnsw (embedding vector_cosine_ops)
+    WHERE type = 'intent'
+  `;
+
+  await sql`
     CREATE INDEX IF NOT EXISTS embeddings_embedding_hnsw_fact_idx
-      ON embeddings USING hnsw (embedding vector_cosine_ops)
-      WHERE type = 'fact';
+    ON embeddings USING hnsw (embedding vector_cosine_ops)
+    WHERE type = 'fact'
+  `;
+
+  await sql`
     CREATE INDEX IF NOT EXISTS embeddings_embedding_hnsw_preference_idx
-      ON embeddings USING hnsw (embedding vector_cosine_ops)
-      WHERE type = 'preference';
+    ON embeddings USING hnsw (embedding vector_cosine_ops)
+    WHERE type = 'preference'
+  `;
 
-    CREATE INDEX IF NOT EXISTS embeddings_user_id_idx
-      ON embeddings (user_id);
+  await sql`CREATE INDEX IF NOT EXISTS embeddings_user_id_idx ON embeddings (user_id)`;
 
+  await sql`
     CREATE INDEX IF NOT EXISTS embeddings_summary_trgm_idx
-      ON embeddings
-      USING gin (summary gin_trgm_ops);
-  `);
+    ON embeddings USING gin (summary gin_trgm_ops)
+  `;
 
   return sql;
 }
