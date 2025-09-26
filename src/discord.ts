@@ -315,8 +315,10 @@ export class DiscordOperator {
         const pushNew = chunk.length + outputAccLen > maxMessageLength;
 
         if (pushNew || responseQueue.length === 0) {
+          outputAccLen = chunk.length;
           responseQueue.push(chunk);
         } else {
+          outputAccLen += chunk.length;
           responseQueue[responseQueue.length - 1] += chunk;
         }
 
