@@ -26,9 +26,6 @@ export async function findRelevantContent(
   const { openai } = await getProvidersFromConfig();
   if (!openai) throw new Error("[RAG] OpenAI provider not configured");
 
-  console.log(
-    `[RAG] searching information for user: ${userId}, with search: "${search}"`,
-  );
   if (config.debug_message) console.log({ simThreshold, limit, type });
 
   const { embeddings } = await openai
@@ -79,6 +76,9 @@ export async function findRelevantContent(
     `;
   }
 
+  console.log(
+    `[RAG] search returned ${results.length} results for user: ${userId}, with search: "${search}"`,
+  );
   return results;
 }
 
@@ -138,7 +138,7 @@ export function getRagTools() {
   return {
     addInformation: tool({
       description:
-        "add a resource to your knowledge base about a user.\n" +
+        "(RAG) add a resource to your knowledge base about a user.\n" +
         "Use this tool without confirmation if you find the information user provided useful for future conversations.",
       inputSchema: z.object({
         user_id: z.string().describe("who this information belongs to"),
@@ -191,7 +191,7 @@ export function getRagTools() {
     }),
     searchInformation: tool({
       description:
-        "search for information in your knowledge base for a given user\n" +
+        "(RAG) search for information in your knowledge base for a given user\n" +
         "Use this tool without confirmation if you want to know about a given topic of a user.",
       inputSchema: z.object({
         user_id: z.string().describe("who you are searching for"),
