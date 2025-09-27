@@ -23,7 +23,12 @@ import {
   getProvidersFromConfig,
   parseProviderModelString,
 } from "./model-routing";
-import { stepCountIs, streamText, type ModelMessage } from "ai";
+import {
+  stepCountIs,
+  streamText,
+  type DataContent,
+  type ModelMessage,
+} from "ai";
 import { cleanupImageCache, getImageUrl } from "./image";
 import { inspect } from "bun";
 import { ToolManager } from "./tool";
@@ -54,7 +59,7 @@ const EMBED_COLOR_INCOMPLETE = Colors.Orange;
 
 type MsgNode = {
   text: string | null;
-  images: Array<{ type: "image_url"; image_url: { url: string } }>;
+  images: Array<{ type: "image"; image: URL | DataContent }>;
   role: "user" | "assistant";
   userId: string | null;
   hasBadAttachments: boolean;
@@ -454,8 +459,8 @@ export class DiscordOperator {
           );
           const texts: string[] = [];
           const images: Array<{
-            type: "image_url";
-            image_url: { url: string };
+            type: "image";
+            image: URL | DataContent;
           }> = [];
           for (const att of goodAttachments) {
             try {
@@ -464,8 +469,8 @@ export class DiscordOperator {
               } else if (att.contentType!.startsWith("image")) {
                 const imageUrl = await getImageUrl(att.url, att.contentType!);
                 images.push({
-                  type: "image_url",
-                  image_url: { url: imageUrl },
+                  type: "image",
+                  image: new URL(imageUrl),
                 });
               }
             } catch {}
