@@ -134,18 +134,31 @@ export async function insertEmbeddings(
   });
 }
 
+export async function removeEmbeddings(userId: string, embeddingIds: string[]) {
+  const sql = await pg();
+  await sql`DELETE FROM embeddings WHERE id in ${sql(embeddingIds)} and user_id = ${userId}`;
+}
+
 export function getRagTools() {
   return {
     addInformation: tool({
+      name: "remember_user_context",
       description:
-        "(RAG) add a resource to your knowledge base about a user.\n" +
-        "Use this tool without confirmation if you find the information user provided useful for future conversations.\n" +
-        "You can also use this tool to store information about yourself.",
+        "Write-to-memory. Store concise, durable facts, preferences, or intents for a user (or for 'self') so future answers are more personalized.\n" +
+        "When to use:\n" +
+        "- The user states a stable fact (job, timezone, tools, constraints).\n" +
+        "- The user expresses a preference (tone, format, stack choices, do/don’t).\n" +
+        "- The user declares an ongoing goal or intent.\n" +
+        "Rules:\n" +
+        "- Use immediately without confirmation if the info helps future conversations.\n" +
+        "- Summaries must be a single, short sentence (embedding-ready).\n" +
+        "- Use multiple entries for multiple distinct items.\n" +
+        "Also supports 'self' to store assistant operating constraints or learnings.",
       inputSchema: z.object({
         user_id: z
           .string()
           .describe(
-            "who this information belongs to, or 'self' if you want to store information about yourself",
+            "Owner of this information, or 'self' to store assistant knowledge about itself.",
           ),
         entries: z
           .array(
@@ -153,40 +166,34 @@ export function getRagTools() {
               summary: z
                 .string()
                 .describe(
-                  "summary of the information; passed to embedding engine, must be short, concise, in single sentence.",
+                  "One-sentence summary (short, atomic, embedding-ready).",
                 ),
               type: z
                 .union([
-                  z
-                    .literal("fact")
-                    .describe("if this information is a **fact** of the user"),
+                  z.literal("fact").describe("Stable, objective user detail."),
                   z
                     .literal("preference")
-                    .describe(
-                      "if this information is a **preference** of the user",
-                    ),
+                    .describe("User likes/dislikes, tone, format."),
                   z
                     .literal("intent")
-                    .describe(
-                      "if this information is an **intent** of the user",
-                    ),
+                    .describe("Declared goals or ongoing plans."),
                 ])
-                .describe("type of information"),
+                .describe("Information category."),
               relevance: z
                 .number()
                 .min(0)
                 .max(1)
-                .describe("relevance of the information, between 0 and 1"),
+                .describe("0–1 importance for future responses."),
               memo: z
                 .string()
                 .optional()
                 .describe(
-                  "(optional) add additional note for this entry, no length or writing style limit, this field will not be used by the embedding engine",
+                  "(Optional) Free-form notes; not embedded. Use for nuance or citations.",
                 ),
             }),
           )
           .describe(
-            "information to add, information should be short and concise for better embedding quality, so use multiple entries if you have more than one information to add",
+            "Use multiple entries for separate items. Keep each summary short and specific.",
           ),
       }),
       execute: async ({ user_id, entries }) => {
@@ -195,17 +202,25 @@ export function getRagTools() {
       },
     }),
     searchInformation: tool({
+      name: "recall_user_context",
       description:
-        "(RAG) search for information in your knowledge base for a given user\n" +
-        "Use this tool without confirmation if you want to know about a given topic of a user.\n" +
-        "You can also use this tool to retrieve information about yourself.",
+        "Read-from-memory. Retrieve previously stored facts, preferences, or intents for a user (or 'self') to personalize the current answer.\n" +
+        "When to use:\n" +
+        "- Before giving advice that depends on the user’s stack, tone, or constraints.\n" +
+        "- When the user references 'what I said earlier' or 'my usual preferences'.\n" +
+        "- To resolve ambiguity about prior goals, choices, or profile details.\n" +
+        "Rules:\n" +
+        "- Use proactively without confirmation when context could change the answer.\n" +
+        "- Provide a focused search phrase (topic or question).",
       inputSchema: z.object({
         user_id: z
           .string()
+          .describe("Whose context to load, or 'self' for assistant memory."),
+        search: z
+          .string()
           .describe(
-            "who you are searching for, or 'self' if you want to search for yourself",
+            "Topic to recall (e.g., 'frontend stack', 'tone', 'deadlines').",
           ),
-        search: z.string().describe("what you are searching for"),
         options: z
           .object({
             simThreshold: z
@@ -213,13 +228,13 @@ export function getRagTools() {
               .min(0)
               .max(1)
               .optional()
-              .describe("(optional) similarity threshold, default to 0.65"),
+              .describe("(Optional) Similarity threshold. Default 0.65."),
             limit: z
               .number()
               .min(1)
               .max(100)
               .optional()
-              .describe("(optional) limit of results, default to 10"),
+              .describe("(Optional) Max results. Default 10."),
             type: z
               .union([
                 z.literal("fact"),
@@ -227,7 +242,7 @@ export function getRagTools() {
                 z.literal("intent"),
               ])
               .optional()
-              .describe("(optional) type of information, default to all"),
+              .describe("(Optional) Filter by category."),
           })
           .optional(),
       }),
@@ -239,6 +254,7 @@ export function getRagTools() {
           type,
         });
         return results.map((r) => ({
+          id: r.id,
           summary: r.summary,
           type: r.type,
           similarity: r.cos_sim,
@@ -246,6 +262,42 @@ export function getRagTools() {
           memo: r.memo,
           created_at: r.created_at,
         }));
+      },
+    }),
+    removeInformation: tool({
+      name: "forget_user_context",
+      description:
+        "Forget-from-memory. Remove stale, incorrect, or user-retracted facts, preferences, or intents for a user (or 'self') to keep personalization accurate.\n" +
+        "When to use:\n" +
+        "- The user updates or contradicts a previously stored detail.\n" +
+        "- A preference or goal is explicitly withdrawn or has expired.\n" +
+        "- You detect duplicates or low-quality entries that could mislead future answers.\n" +
+        "Rules:\n" +
+        "- Use immediately without confirmation when the prior info would cause wrong advice.\n" +
+        "- Target specific entries by `id` to avoid unintended loss.\n" +
+        "Tips:\n" +
+        "- Prefer replacing: forget the old entry, then call remember_user_context with the updated one.\n" +
+        "- If unsure which to delete, first call recall_user_context to review candidates.",
+      inputSchema: z.object({
+        user_id: z
+          .string()
+          .describe("Whose context to modify, or 'self' for assistant memory."),
+        memory_ids: z
+          .array(
+            z
+              .string()
+              .describe(
+                "IDs of entries to remove (from prior search results).",
+              ),
+          )
+          .min(1)
+          .max(10)
+          .describe(
+            "IDs of entries to remove from memory. (1 to 10 entries at a time)",
+          ),
+      }),
+      execute: async ({ user_id, memory_ids }) => {
+        await removeEmbeddings(user_id, memory_ids);
       },
     }),
   };
