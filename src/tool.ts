@@ -81,7 +81,7 @@ export class ToolManager {
       success.length > 0
         ? success.reduce((acc, tool) => ({ ...acc, ...tool }))
         : undefined;
-    if (this.ragTools) return { ...tools, ...this.ragTools };
+    if (this.ragTools) return { ...this.ragTools, ...tools };
     return tools;
   }
 
