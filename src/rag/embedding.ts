@@ -139,9 +139,14 @@ export function getRagTools() {
     addInformation: tool({
       description:
         "(RAG) add a resource to your knowledge base about a user.\n" +
-        "Use this tool without confirmation if you find the information user provided useful for future conversations.",
+        "Use this tool without confirmation if you find the information user provided useful for future conversations.\n" +
+        "You can also use this tool to store information about yourself.",
       inputSchema: z.object({
-        user_id: z.string().describe("who this information belongs to"),
+        user_id: z
+          .string()
+          .describe(
+            "who this information belongs to, or 'self' if you want to store information about yourself",
+          ),
         entries: z
           .array(
             z.object({
@@ -192,9 +197,14 @@ export function getRagTools() {
     searchInformation: tool({
       description:
         "(RAG) search for information in your knowledge base for a given user\n" +
-        "Use this tool without confirmation if you want to know about a given topic of a user.",
+        "Use this tool without confirmation if you want to know about a given topic of a user.\n" +
+        "You can also use this tool to retrieve information about yourself.",
       inputSchema: z.object({
-        user_id: z.string().describe("who you are searching for"),
+        user_id: z
+          .string()
+          .describe(
+            "who you are searching for, or 'self' if you want to search for yourself",
+          ),
         search: z.string().describe("what you are searching for"),
         options: z
           .object({
