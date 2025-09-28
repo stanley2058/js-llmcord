@@ -299,9 +299,13 @@ export class DiscordOperator {
         stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
       };
 
-      const stream = useCompatibleTools
-        ? streamTextWithCompatibleTools(opts)
-        : streamText(opts);
+      if (tools && useCompatibleTools)
+        console.log("Using tools in compatible mode");
+
+      const stream =
+        tools && useCompatibleTools
+          ? streamTextWithCompatibleTools(opts)
+          : streamText(opts);
 
       const { textStream, finishReason, response } = stream;
       if (this.cachedConfig.debug_message) console.log(inspect(messages));
@@ -331,7 +335,7 @@ export class DiscordOperator {
             clearInterval(pusher);
             return;
           }
-          if (upToDate || (done && !flushed)) return;
+          if (upToDate && !(done && !flushed)) return;
 
           // Consume all new data since last tick
           const delta = contentAcc.slice(pushedIndex);
@@ -409,6 +413,9 @@ export class DiscordOperator {
       }
 
       await pusherPromise;
+      if (this.cachedConfig.debug_message) {
+        console.log(`Done writing to Discord`);
+      }
 
       const resp = await response;
       await this.modelMessageOperator.create({

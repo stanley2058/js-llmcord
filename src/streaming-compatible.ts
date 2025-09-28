@@ -17,6 +17,7 @@ type ResponseMessage = Awaited<
 
 const TOOL_CALL_PATTERN =
   /<tool-call\s+tool="([^"]+)">([\s\S]*?)<\/tool-call>/g;
+const TOOL_CALL_SINGLE = /<tool-call\s+tool="([^"]+)">([\s\S]*?)<\/tool-call>/;
 function maybeToolCallStart(text: string) {
   const start = "<tool-call";
   for (let i = 0; i < Math.min(text.length, start.length); i++) {
@@ -85,29 +86,60 @@ export function streamTextWithCompatibleTools({
 
       let buffer = "";
       let toolMatch: RegExpExecArray | null = null;
+      let inToolCall = false;
+      let carryOver = "";
       for await (const chunk of textStream) {
-        if (maybeToolCallStart(buffer || chunk)) {
+        if (inToolCall) {
           buffer += chunk;
-          continue;
+        } else if (maybeToolCallStart(chunk) && !toolMatch) {
+          inToolCall = true;
+          buffer = chunk;
         } else {
-          buffer = "";
-        }
-        if (maybeToolCallEnd(buffer)) {
-          toolMatch = TOOL_CALL_PATTERN.exec(buffer);
-          buffer = "";
+          yield chunk;
           continue;
         }
 
-        yield chunk;
+        if (inToolCall && maybeToolCallEnd(buffer)) {
+          const match = buffer.match(TOOL_CALL_SINGLE);
+          if (match) {
+            const full = match[0];
+            const idx = buffer.indexOf(full);
+            const endIdx = idx + full.length;
+            carryOver = buffer.slice(endIdx);
+
+            toolMatch = [
+              full,
+              match[1],
+              match[2],
+            ] as unknown as RegExpExecArray;
+          } else {
+            yield buffer;
+          }
+          buffer = "";
+          inToolCall = false;
+        }
+      }
+
+      if (!toolMatch && buffer) {
+        if (inToolCall) yield buffer;
+        buffer = "";
+        inToolCall = false;
       }
 
       const [, toolName, payload] = toolMatch ?? [];
       const tool = toolName && tools?.[toolName];
       if (!toolName || !tool || !tool.execute) {
         resolveFinishReason(await finishReason);
+
+        if (carryOver) {
+          yield carryOver;
+          carryOver = "";
+        }
         resolveFinalResponses({ messages: finalResponsesAccu });
         break;
       }
+
+      console.log(`Calling tool in compatible mode: ${toolName}`);
 
       // call tool
       const callId = generateCallId();
@@ -122,20 +154,20 @@ export function streamTextWithCompatibleTools({
         });
 
         messages.push({
-          role: "tool",
-          content: [
+          role: "system",
+          content: JSON.stringify([
             {
               type: "tool-result",
               toolCallId: callId,
               toolName,
               output: toToolResultOutput(toolResult),
             },
-          ],
+          ]),
         });
       } catch (err) {
         messages.push({
-          role: "tool",
-          content: [
+          role: "system",
+          content: JSON.stringify([
             {
               type: "tool-result",
               toolCallId: callId,
@@ -145,8 +177,13 @@ export function streamTextWithCompatibleTools({
                 value: `Tool execution failed: ${String(err)}`,
               },
             },
-          ],
+          ]),
         });
+      }
+
+      if (carryOver) {
+        yield carryOver;
+        carryOver = "";
       }
     }
   };
