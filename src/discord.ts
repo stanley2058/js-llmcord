@@ -293,7 +293,6 @@ export class DiscordOperator {
 
       const { textStream, finishReason, response } = streamText(opts);
       if (this.cachedConfig.debug_message) console.log(inspect(messages));
-      if (this.cachedConfig.debug_message) console.log(inspect(tools));
 
       let contentAcc = "";
       let pushedIndex = 0;
