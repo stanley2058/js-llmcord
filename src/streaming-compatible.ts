@@ -1,12 +1,11 @@
 import {
+  asSchema,
   streamText,
   type FinishReason,
   type JSONValue,
   type ModelMessage,
   type ToolResultPart,
 } from "ai";
-import type { ZodType } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 export type StreamTextParams = Parameters<typeof streamText>[0];
 export type StreamTextResult = Awaited<ReturnType<typeof streamText>>;
@@ -42,11 +41,10 @@ export function streamTextWithCompatibleTools({
   messages = [...(messages || [])];
 
   const toolDesc = Object.entries((tools = tools || {})).map(([name, tool]) => {
-    const jsonSchema = zodToJsonSchema(tool.inputSchema as ZodType);
     return {
       name,
       description: tool.description,
-      jsonSchema,
+      jsonSchema: asSchema(tool.inputSchema).jsonSchema,
     };
   });
   const compatibleSystemPrompt: ModelMessage = {
