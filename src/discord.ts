@@ -28,11 +28,14 @@ import {
   streamText,
   type DataContent,
   type ModelMessage,
+  type TextPart,
 } from "ai";
-import { cleanupImageCache, getImageUrl } from "./image";
+import { getImageUrl } from "./image";
 import { inspect } from "bun";
 import { ToolManager } from "./tool";
 import type { Config } from "./type";
+import type { StreamTextParams } from "./streaming-compatible";
+import { ModelMessageOperator } from "./model-messages";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -52,20 +55,17 @@ const VISION_MODEL_TAGS = [
 
 const STREAMING_INDICATOR = " ⚪";
 const EDIT_DELAY_SECONDS = 1;
-const MAX_MESSAGE_NODES = 500;
 
 const EMBED_COLOR_COMPLETE = Colors.DarkGreen;
 const EMBED_COLOR_INCOMPLETE = Colors.Orange;
 
-type MsgNode = {
-  text: string | null;
-  images: Array<{ type: "image"; image: URL | DataContent }>;
-  role: "user" | "assistant";
-  userId: string | null;
-  hasBadAttachments: boolean;
-  fetchParentFailed: boolean;
-  parentMsg: Message | null;
-};
+const Warning = {
+  maxText: "⚠️ Exceeding max text length per message.",
+  maxImages: "⚠️ Exceeding max images per message.",
+  cannotSeeImages: "⚠️ Model cannot see images.",
+  unsupportedAttachments: "⚠️ Unsupported attachments.",
+  messageHistoryTruncated: "⚠️ Older message history truncated.",
+} as const;
 
 type JSONLike =
   | null
@@ -78,11 +78,10 @@ type JSONLike =
 export class DiscordOperator {
   private client: Client;
   private curProviderModel = "openai/gpt-4o";
-  private msgNodes: Map<string, MsgNode> = new Map();
-  private imageCacheCleanupInterval: NodeJS.Timeout;
   private toolManager: ToolManager;
   private cachedConfig: Config = {} as Config;
   private lastTypingSentAt = new Map<string, number>();
+  private modelMessageOperator = new ModelMessageOperator();
 
   constructor() {
     this.client = new Client({
@@ -96,17 +95,12 @@ export class DiscordOperator {
       partials: [Partials.Channel],
     });
 
-    cleanupImageCache().catch(console.error);
-    this.imageCacheCleanupInterval = setInterval(
-      () => cleanupImageCache().catch(console.error),
-      24 * 60 * 60 * 1000,
-    );
-
     this.toolManager = new ToolManager();
 
     this.client.once("clientReady", () => this.clientReady());
     this.client.on("interactionCreate", this.interactionCreate);
     this.client.on("messageCreate", this.messageCreate);
+    this.client.on("messageDelete", this.messageDelete);
   }
 
   async init() {
@@ -244,7 +238,8 @@ export class DiscordOperator {
     }
     console.log(`Using: [${provider}] w/ [${model}]`);
     const modelInstance = providers[provider]!(model);
-    const { messages, userWarnings } = await this.buildMessages(msg);
+    const { messages, userWarnings, currentMessageImageIds } =
+      await this.buildMessages(msg);
 
     const usePlainResponses = this.cachedConfig.use_plain_responses ?? false;
     const maxMessageLength = usePlainResponses
@@ -282,7 +277,8 @@ export class DiscordOperator {
       const tools = toolsDisabledForModel
         ? undefined
         : await this.toolManager.getTools();
-      const { textStream, finishReason } = streamText({
+
+      const opts: StreamTextParams = {
         model: modelInstance,
         messages: messages.reverse(),
         maxOutputTokens:
@@ -293,7 +289,9 @@ export class DiscordOperator {
         ...restPart,
         tools,
         stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
-      });
+      };
+
+      const { textStream, finishReason, response } = streamText(opts);
       if (this.cachedConfig.debug_message) console.log(inspect(messages));
       if (this.cachedConfig.debug_message) console.log(inspect(tools));
 
@@ -301,6 +299,7 @@ export class DiscordOperator {
       let pushedIndex = 0;
       let outputAccLen = 0;
       let lastMsg = msg;
+      const discordMessageCreated: string[] = [];
       let flushed = false;
       const responseQueue: string[] = [];
       const { promise: pusherPromise, resolve: pusherResolve } =
@@ -343,13 +342,13 @@ export class DiscordOperator {
         else this.lastTypingSentAt.delete(msg.channel.id);
 
         if (pushNew || msg === lastMsg) {
-          lastMsg = await this.replyHelper(msg, lastMsg, { embeds: [emb] });
-          const node = this.getOrInsertNode(lastMsg.id);
-          node.text = chunk;
+          lastMsg = await lastMsg.reply({
+            embeds: [emb],
+            allowedMentions: { parse: [], repliedUser: false },
+          });
+          discordMessageCreated.push(lastMsg.id);
         } else {
           await lastMsg.edit({ embeds: [emb] });
-          const node = this.getOrInsertNode(lastMsg.id);
-          node.text += chunk;
         }
       }, EDIT_DELAY_SECONDS * 1000);
 
@@ -363,240 +362,86 @@ export class DiscordOperator {
 
       if (usePlainResponses) {
         for (const content of responseQueue) {
-          lastMsg = await this.replyHelper(msg, lastMsg, { content });
-          const node = this.getOrInsertNode(lastMsg.id);
-          node.text = content;
+          lastMsg = await lastMsg.reply({
+            content,
+            allowedMentions: { parse: [], repliedUser: false },
+          });
         }
       }
 
       await pusherPromise;
+
+      const resp = await response;
+      await this.modelMessageOperator.create({
+        messageId: discordMessageCreated,
+        parentMessageId: msg.id,
+        messages: resp.messages,
+        imageIds:
+          currentMessageImageIds.length > 0
+            ? currentMessageImageIds
+            : undefined,
+      });
     } catch (e) {
       done = true;
       console.error("Error while generating response", e);
     }
-
-    if (this.msgNodes.size > MAX_MESSAGE_NODES) {
-      const keys = [...this.msgNodes.keys()]
-        .map((k) => BigInt(k))
-        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-      const toDrop = keys.slice(0, this.msgNodes.size - MAX_MESSAGE_NODES);
-      for (const id of toDrop) {
-        const sid = String(id);
-        if (!this.msgNodes.has(sid)) continue;
-        this.msgNodes.delete(sid);
-      }
-    }
   };
 
-  private async replyHelper(
-    base: Message,
-    target: Message,
-    payload: { embeds?: EmbedBuilder[]; content?: string },
-  ) {
-    const replied = await target.reply({
-      ...payload,
-      allowedMentions: { parse: [], repliedUser: false },
-    });
-    this.msgNodes.set(replied.id, {
-      text: null,
-      images: [],
-      role: "assistant",
-      userId: null,
-      hasBadAttachments: false,
-      fetchParentFailed: false,
-      parentMsg: base,
-    });
-    return replied;
-  }
+  private messageDelete = async (msg: { id: string }) => {
+    await this.modelMessageOperator.removeAll(msg.id);
+  };
 
   private async buildMessages(msg: Message) {
     const params = this.cachedConfig.models[this.curProviderModel];
     const { tools: useTools } = params ?? {};
     const toolsDisabledForModel = useTools === false;
-
-    const visionModels = (VISION_MODEL_TAGS as readonly string[]).concat(
-      this.cachedConfig.additional_vision_models || [],
-    );
-    const acceptImages = visionModels.some((t) =>
-      this.curProviderModel.toLowerCase().includes(t),
-    );
-    const maxText = this.cachedConfig.max_text ?? 100000;
-    const maxImages = acceptImages ? (this.cachedConfig.max_images ?? 5) : 0;
     const maxMessages = this.cachedConfig.max_messages ?? 25;
 
-    const messages: ModelMessage[] = [];
-    const userWarnings = new Set<string>();
     let currMsg: Message | null = msg;
-    while (currMsg && messages.length < maxMessages) {
-      const id = currMsg.id;
-      const node = this.getOrInsertNode(id);
-      try {
-        if (node.text === null) {
-          const mention = this.client.user ? `<@${this.client.user.id}>` : "";
-          const mentionNick = this.client.user
-            ? `<@!${this.client.user.id}>`
-            : "";
-          let content = currMsg.content || "";
-          if (content.startsWith(mention))
-            content = content.slice(mention.length).trimStart();
-          else if (content.startsWith(mentionNick))
-            content = content.slice(mentionNick.length).trimStart();
+    let existingMessages: ModelMessage[] = []; // new -> old
+    const newMessages: ModelMessage[] = []; // new -> old
+    const userWarnings = new Set<string>();
+    let currentMessageImageIds: string[] = [];
+    while (currMsg && newMessages.length < maxMessages) {
+      let history = this.modelMessageOperator.getAll(currMsg.id);
+      if (history.length > 0) {
+        if (history.length + newMessages.length > maxMessages) {
+          userWarnings.add(Warning.messageHistoryTruncated);
+          history = history.slice(0, maxMessages - newMessages.length);
+        }
 
-          const embedsText = currMsg.embeds
-            .map((e) =>
-              [e.title, e.description, e.footer?.text]
-                .filter(Boolean)
-                .join("\n"),
-            )
-            .filter((s) => s && s.length > 0) as string[];
+        existingMessages = history.flat();
+        currMsg = null;
+      } else {
+        const {
+          parent,
+          message,
+          userWarnings: uw,
+          imageIds,
+        } = await this.messageToModelMessages(currMsg);
 
-          const componentsText: string[] = [];
-          for (const row of currMsg.components || []) {
-            if (row.type === ComponentType.ActionRow) {
-              for (const comp of (row as any).components || []) {
-                if (typeof (comp as any).label === "string")
-                  componentsText.push((comp as any).label);
-              }
-            }
-          }
+        if (message) {
+          newMessages.push(message);
 
-          const goodAttachments = [...currMsg.attachments.values()].filter(
-            (att) =>
-              att.contentType &&
-              (att.contentType.startsWith("text") ||
-                att.contentType.startsWith("image")),
-          );
-          const texts: string[] = [];
-          const images: Array<{
-            type: "image";
-            image: URL | DataContent;
-          }> = [];
-          for (const att of goodAttachments) {
-            try {
-              if (att.contentType!.startsWith("text")) {
-                texts.push(await fetchAttachmentText(att.url));
-              } else if (att.contentType!.startsWith("image")) {
-                const imageUrl = await getImageUrl(att.url, att.contentType!);
-                images.push({
-                  type: "image",
-                  image: new URL(imageUrl),
-                });
-              }
-            } catch {}
-          }
-
-          node.text = [content, ...embedsText, ...componentsText, ...texts]
-            .filter(Boolean)
-            .join("\n");
-          node.images = images;
-          node.role =
-            currMsg.author.id === this.client.user?.id ? "assistant" : "user";
-          node.userId = node.role === "user" ? currMsg.author.id : null;
-          node.hasBadAttachments =
-            currMsg.attachments.size > goodAttachments.length;
-
-          try {
-            let parent: Message | null = null;
-            const isPublicThread =
-              currMsg.channel.type === ChannelType.PublicThread;
-            const parentIsThreadStart =
-              isPublicThread &&
-              !currMsg.reference &&
-              (currMsg.channel as any).parent?.type === ChannelType.GuildText;
-            if (
-              !currMsg.reference &&
-              !content.includes(mention) &&
-              !content.includes(mentionNick)
-            ) {
-              const prev: Collection<string, Message<boolean>> | null =
-                await currMsg.channel.messages
-                  .fetch({ before: currMsg.id, limit: 1 })
-                  .catch(() => null);
-              const prevMsg: Message | null =
-                prev && prev.first() ? prev.first()! : null;
-              if (
-                prevMsg &&
-                (prevMsg.type === MessageType.Default ||
-                  prevMsg.type === MessageType.Reply) &&
-                prevMsg.author.id ===
-                  (currMsg.channel.type === ChannelType.DM
-                    ? this.client.user?.id
-                    : currMsg.author.id)
-              ) {
-                parent = prevMsg;
-              }
-            }
-            if (!parent) {
-              if (parentIsThreadStart) {
-                const starter = await (currMsg.channel as any)
-                  .fetchStarterMessage()
-                  .catch(() => null);
-                parent = starter as Message | null;
-              } else if (currMsg.reference?.messageId) {
-                const cached = currMsg.reference?.messageId
-                  ? await currMsg.fetchReference().catch(() => null)
-                  : null;
-                parent = cached as Message | null;
-              }
-            }
-            node.parentMsg = parent;
-          } catch {
-            node.fetchParentFailed = true;
+          // a parent not in db
+          if (currMsg.id !== msg.id) {
+            await this.modelMessageOperator.create({
+              messageId: currMsg.id,
+              parentMessageId: msg.id,
+              messages: [message],
+              imageIds,
+            });
+          } else {
+            currentMessageImageIds = imageIds || [];
           }
         }
 
-        const contentArr = node.images.slice(0, maxImages).length
-          ? [
-              ...asTextContent(node.text?.slice(0, maxText) || null),
-              ...node.images.slice(0, maxImages),
-            ]
-          : node.text
-            ? node.text.slice(0, maxText)
-            : "";
-
-        if (contentArr !== "") {
-          const msg: ModelMessage = {
-            content: contentArr as any,
-            role: node.role,
-          };
-          if (node.userId) {
-            if (typeof msg.content === "string") {
-              msg.content = `[name=${String(node.userId)}]: ${msg.content}`;
-            } else {
-              for (const c of msg.content || []) {
-                if (c.type !== "text") continue;
-                c.text = `[name=${String(node.userId)}]: ${c.text}`;
-              }
-            }
-          }
-          messages.push(msg);
-        }
-
-        if ((node.text || "").length > maxText)
-          userWarnings.add(
-            `⚠️ Max ${maxText.toLocaleString()} characters per message`,
-          );
-        if (node.images.length > maxImages)
-          userWarnings.add(
-            maxImages > 0
-              ? `⚠️ Max ${maxImages} image${maxImages === 1 ? "" : "s"} per message`
-              : "⚠️ Can't see images",
-          );
-        if (node.hasBadAttachments)
-          userWarnings.add("⚠️ Unsupported attachments");
-        if (
-          node.fetchParentFailed ||
-          (node.parentMsg && messages.length === maxMessages)
-        )
-          userWarnings.add(
-            `⚠️ Only using last ${messages.length} message${messages.length === 1 ? "" : "s"}`,
-          );
-
-        currMsg = node.parentMsg;
-      } catch (e) {
-        console.error(e);
+        if (uw) for (const w of uw) userWarnings.add(w);
+        currMsg = parent;
       }
     }
+
+    const messages = newMessages.concat(existingMessages);
 
     console.log(
       `Message received (user ID: ${msg.author.id}, attachments: ${msg.attachments.size}, conversation length: ${messages.length}):\n${msg.content}`,
@@ -625,7 +470,188 @@ export class DiscordOperator {
       });
     }
 
-    return { messages, userWarnings };
+    return { messages, userWarnings, currentMessageImageIds };
+  }
+
+  private async messageToModelMessages(msg: Message) {
+    const visionModels = (VISION_MODEL_TAGS as readonly string[]).concat(
+      this.cachedConfig.additional_vision_models || [],
+    );
+    const acceptImages = visionModels.some((t) =>
+      this.curProviderModel.toLowerCase().includes(t),
+    );
+    const maxText = this.cachedConfig.max_text ?? 100000;
+    const maxImages = acceptImages ? (this.cachedConfig.max_images ?? 5) : 0;
+
+    const userWarnings = new Set<string>();
+    try {
+      const mention = this.client.user ? `<@${this.client.user.id}>` : "";
+      const mentionNick = this.client.user ? `<@!${this.client.user.id}>` : "";
+      let content = msg.content || "";
+      if (content.startsWith(mention))
+        content = content.slice(mention.length).trimStart();
+      else if (content.startsWith(mentionNick))
+        content = content.slice(mentionNick.length).trimStart();
+
+      const embedsText = msg.embeds
+        .map((e) =>
+          [e.title, e.description, e.footer?.text].filter(Boolean).join("\n"),
+        )
+        .filter((s) => s && s.length > 0) as string[];
+
+      const componentsText: string[] = [];
+      for (const row of msg.components || []) {
+        if (row.type === ComponentType.ActionRow) {
+          for (const comp of row.components || []) {
+            if ("label" in comp && typeof comp.label === "string") {
+              componentsText.push(comp.label);
+            }
+          }
+        }
+      }
+
+      const goodAttachments = [...msg.attachments.values()].filter(
+        (att) =>
+          att.contentType &&
+          (att.contentType.startsWith("text") ||
+            att.contentType.startsWith("image")),
+      );
+      if (goodAttachments.length !== msg.attachments.size) {
+        userWarnings.add(Warning.unsupportedAttachments);
+      }
+
+      const texts: string[] = [];
+      const images: Array<{
+        type: "image";
+        image: URL | DataContent;
+      }> = [];
+      const imageIds: string[] = [];
+      for (const att of goodAttachments) {
+        try {
+          if (att.contentType!.startsWith("text")) {
+            texts.push(await fetchAttachmentText(att.url));
+          } else if (att.contentType!.startsWith("image")) {
+            const image = await getImageUrl(att.url, att.contentType!);
+            if (typeof image === "string") {
+              images.push({
+                type: "image",
+                image: image,
+              });
+            } else {
+              imageIds.push(image.key);
+              images.push({
+                type: "image",
+                image: new URL(image.url),
+              });
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      if (images.length > maxImages) {
+        userWarnings.add(
+          maxImages > 0 ? Warning.maxImages : Warning.cannotSeeImages,
+        );
+      }
+
+      const combinedText = [content, ...embedsText, ...componentsText, ...texts]
+        .filter(Boolean)
+        .join("\n");
+
+      const role =
+        msg.author.id === this.client.user?.id ? "assistant" : "user";
+
+      let parent: Message | null = null;
+      try {
+        const isPublicThread = msg.channel.type === ChannelType.PublicThread;
+        const parentIsThreadStart =
+          isPublicThread &&
+          !msg.reference &&
+          (msg.channel as any).parent?.type === ChannelType.GuildText;
+        if (
+          !msg.reference &&
+          !content.includes(mention) &&
+          !content.includes(mentionNick)
+        ) {
+          const prev: Collection<string, Message<boolean>> | null =
+            await msg.channel.messages
+              .fetch({ before: msg.id, limit: 1 })
+              .catch(() => null);
+          const prevMsg: Message | null =
+            prev && prev.first() ? prev.first()! : null;
+          if (
+            prevMsg &&
+            (prevMsg.type === MessageType.Default ||
+              prevMsg.type === MessageType.Reply) &&
+            prevMsg.author.id ===
+              (msg.channel.type === ChannelType.DM
+                ? this.client.user?.id
+                : msg.author.id)
+          ) {
+            parent = prevMsg;
+          }
+        }
+        if (!parent) {
+          if (parentIsThreadStart) {
+            const starter = await msg.channel
+              .fetchStarterMessage()
+              .catch(() => null);
+            parent = starter;
+          } else if (msg.reference?.messageId) {
+            const cached = msg.reference?.messageId
+              ? await msg.fetchReference().catch(() => null)
+              : null;
+            parent = cached as Message | null;
+          }
+        }
+      } catch (e) {
+        console.error(e);
+        parent = null;
+      }
+
+      let contentArr = images.slice(0, maxImages).length
+        ? [
+            { type: "text" as const, text: combinedText.slice(0, maxText) },
+            ...images.slice(0, maxImages),
+          ]
+        : combinedText.slice(0, maxText);
+
+      if (contentArr === "") return { parent };
+      if (role === "user") {
+        const userId = msg.author.id;
+        if (typeof contentArr === "string") {
+          contentArr = `[name=${String(userId)}]: ${contentArr}`;
+        } else {
+          for (const c of contentArr || []) {
+            if (c.type !== "text") continue;
+            c.text = `[name=${String(userId)}]: ${c.text}`;
+          }
+        }
+
+        return {
+          parent,
+          userWarnings,
+          imageIds,
+          message: {
+            role,
+            content: contentArr,
+          } satisfies ModelMessage,
+        };
+      } else {
+        return {
+          parent,
+          userWarnings,
+          message: {
+            role,
+            content: contentArr as string | TextPart[],
+          } satisfies ModelMessage,
+        };
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return { parent: null };
   }
 
   private getChannelsAndRolesFromMessage(msg: Message) {
@@ -706,21 +732,6 @@ export class DiscordOperator {
     return true;
   }
 
-  private getOrInsertNode(id: string) {
-    const node = this.msgNodes.get(id) || {
-      text: null,
-      images: [],
-      role: "assistant",
-      userId: null as string | null,
-      hasBadAttachments: false,
-      fetchParentFailed: false,
-      parentMsg: null as Message | null,
-    };
-    this.msgNodes.set(id, node);
-
-    return node;
-  }
-
   private async sendTyping(msg: Message) {
     const TYPING_EXPIRY = 8 * 1000; // actually 10s, but with some buffer
     const now = Date.now();
@@ -734,7 +745,7 @@ export class DiscordOperator {
   }
 
   async destroy() {
-    clearInterval(this.imageCacheCleanupInterval);
+    this.client.off("messageDelete", this.messageDelete);
     this.client.off("messageCreate", this.messageCreate);
     this.client.off("interactionCreate", this.interactionCreate);
     await this.client.destroy();
@@ -748,10 +759,6 @@ function decodeIds(xs: Array<string | number> | undefined): Set<string> {
 async function fetchAttachmentText(url: string) {
   const res = await fetch(url);
   return await res.text();
-}
-
-function asTextContent(s: string | null | undefined) {
-  return s ? ([{ type: "text", text: s }] as const) : ([] as const);
 }
 
 function nowIsoLike() {

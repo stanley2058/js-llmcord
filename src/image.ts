@@ -1,23 +1,11 @@
 import { getConfig } from "./config-parser";
 import db from "./db";
 
-export async function getImageUrl(
-  originalUrl: string,
-  contentType: string,
-): Promise<string> {
+export async function getImageUrl(originalUrl: string, contentType: string) {
   const config = await getConfig();
 
   // Fetch image data to compute content hash
   const bytes = await fetchAttachmentBytes(originalUrl);
-  const imageHash = Bun.hash(bytes).toString(36);
-
-  // Check cache first using content hash
-  const cached = db
-    .query("SELECT uploadthing_url FROM image_cache WHERE url_hash = ?")
-    .get(imageHash) as { uploadthing_url: string } | null;
-  if (cached) {
-    return cached.uploadthing_url;
-  }
 
   // If no UploadThing config, or image is small, return base64
   const MAX_B64_SIZE = 1 * 1024 * 1024; // 1MB
@@ -54,40 +42,16 @@ export async function getImageUrl(
 
     // Cache the result keyed by content hash
     db.run(
-      "INSERT OR REPLACE INTO image_cache (url_hash, original_url, uploadthing_id, uploadthing_url, created_at) VALUES (?, ?, ?, ?, ?)",
-      [imageHash, originalUrl, response.data.key, uploadedUrl, Date.now()],
+      "INSERT OR REPLACE INTO image_cache (uploadthing_id, uploadthing_url, original_url, created_at) VALUES (?, ?, ?, ?)",
+      [response.data.key, uploadedUrl, originalUrl, Date.now()],
     );
 
-    return uploadedUrl;
+    return { key: response.data.key, url: uploadedUrl };
   } catch (error) {
     console.error("Error uploading image:", error);
     // Fall back to base64
     const b64 = bufferToBase64(bytes);
     return `data:${contentType};base64,${b64}`;
-  }
-}
-
-export async function cleanupImageCache() {
-  const config = await getConfig();
-  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const toDelete = db
-    .query("SELECT uploadthing_id FROM image_cache WHERE created_at < ?")
-    .all(sevenDaysAgo) as { uploadthing_id: string }[];
-
-  if (config.utApi) {
-    try {
-      await config.utApi.deleteFiles(toDelete.map((d) => d.uploadthing_id));
-    } catch (e) {
-      console.error("Error deleting from UploadThing:", e);
-      return;
-    }
-  }
-
-  const deleted = db.run("DELETE FROM image_cache WHERE created_at < ?", [
-    sevenDaysAgo,
-  ]);
-  if (deleted.changes > 0) {
-    console.log(`Cleaned up ${deleted.changes} old cached images`);
   }
 }
 

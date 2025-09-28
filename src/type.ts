@@ -71,3 +71,11 @@ export type Providers =
   | "openrouter"
   | "anthropic"
   | (string & {});
+
+export type DbModelMessage = {
+  message_id: string;
+  model_message: string;
+  image_ids: string | null;
+  parent_message_id: string | null;
+  created_at: number;
+};
