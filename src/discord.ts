@@ -242,9 +242,6 @@ export class DiscordOperator {
       await this.buildMessages(msg);
 
     const usePlainResponses = this.cachedConfig.use_plain_responses ?? false;
-    const maxMessageLength = usePlainResponses
-      ? 4000
-      : 4096 - STREAMING_INDICATOR.length;
     let warnEmbed: EmbedBuilder | null = null;
     if (!usePlainResponses) {
       warnEmbed = new EmbedBuilder();
@@ -296,58 +293,86 @@ export class DiscordOperator {
 
       let contentAcc = "";
       let pushedIndex = 0;
-      let outputAccLen = 0;
       let lastMsg = msg;
       const discordMessageCreated: string[] = [];
       let flushed = false;
       const responseQueue: string[] = [];
       const { promise: pusherPromise, resolve: pusherResolve } =
         Promise.withResolvers();
+      let pushing = false;
+      const getMaxForCurrent = (isStreaming: boolean) =>
+        usePlainResponses
+          ? 4000
+          : isStreaming
+            ? 4096 - STREAMING_INDICATOR.length
+            : 4096;
       const pusher = setInterval(async () => {
-        const upToDate = pushedIndex === contentAcc.length;
-        if (flushed && done && upToDate) {
-          pusherResolve();
-          return clearInterval(pusher);
-        }
-        if (upToDate) return;
+        if (pushing) return; // prevent re-entrancy
+        pushing = true;
+        try {
+          const upToDate = pushedIndex === contentAcc.length;
+          if (flushed && done && upToDate) {
+            pusherResolve();
+            clearInterval(pusher);
+            return;
+          }
+          if (upToDate || (done && !flushed)) return;
 
-        const chunk = contentAcc.slice(
-          pushedIndex,
-          pushedIndex + maxMessageLength,
-        );
-        pushedIndex += chunk.length;
-        const pushNew = chunk.length + outputAccLen > maxMessageLength;
+          // Consume all new data since last tick
+          const delta = contentAcc.slice(pushedIndex);
+          pushedIndex = contentAcc.length;
 
-        if (pushNew || responseQueue.length === 0) {
-          outputAccLen = chunk.length;
-          responseQueue.push(chunk);
-        } else {
-          outputAccLen += chunk.length;
-          responseQueue[responseQueue.length - 1] += chunk;
-        }
+          // Ensure at least one bucket
+          if (responseQueue.length === 0) responseQueue.push("");
 
-        const emb = warnEmbed
-          ? new EmbedBuilder(warnEmbed.toJSON())
-          : new EmbedBuilder();
+          let i = 0;
+          while (i < delta.length) {
+            const isStreamingEmbed = !done && i < delta.length; // last (active) bucket
+            const maxLen = getMaxForCurrent(isStreamingEmbed);
 
-        const accuContent = responseQueue[responseQueue.length - 1]!;
-        const desc = done ? accuContent : accuContent + STREAMING_INDICATOR;
-        emb.setDescription(desc);
-        emb.setColor(done ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE);
-        flushed = done;
+            const lastIdx = responseQueue.length - 1;
+            const lastLen = responseQueue[lastIdx]!.length;
+            const room = Math.max(0, maxLen - lastLen);
 
-        // handle continuous typing
-        if (!flushed) await this.sendTyping(msg);
-        else this.lastTypingSentAt.delete(msg.channel.id);
+            if (room === 0) {
+              // Start a new bucket
+              responseQueue.push("");
+              continue;
+            }
 
-        if (pushNew || msg === lastMsg) {
-          lastMsg = await lastMsg.reply({
-            embeds: [emb],
-            allowedMentions: { parse: [], repliedUser: false },
-          });
-          discordMessageCreated.push(lastMsg.id);
-        } else {
-          await lastMsg.edit({ embeds: [emb] });
+            const take = Math.min(room, delta.length - i);
+            responseQueue[lastIdx] += delta.slice(i, i + take);
+            i += take;
+          }
+
+          const emb = warnEmbed
+            ? new EmbedBuilder(warnEmbed.toJSON())
+            : new EmbedBuilder();
+
+          const accuContent = responseQueue[responseQueue.length - 1]!;
+          const desc = done ? accuContent : accuContent + STREAMING_INDICATOR;
+          emb.setDescription(desc);
+          emb.setColor(done ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE);
+          flushed = done;
+
+          if (!flushed) await this.sendTyping(msg);
+          else this.lastTypingSentAt.delete(msg.channel.id);
+
+          // New Discord message only when a new bucket appeared (or first send)
+          if (
+            discordMessageCreated.length < responseQueue.length ||
+            msg === lastMsg
+          ) {
+            lastMsg = await lastMsg.reply({
+              embeds: [emb],
+              allowedMentions: { parse: [], repliedUser: false },
+            });
+            discordMessageCreated.push(lastMsg.id);
+          } else {
+            await lastMsg.edit({ embeds: [emb] });
+          }
+        } finally {
+          pushing = false;
         }
       }, EDIT_DELAY_SECONDS * 1000);
 
