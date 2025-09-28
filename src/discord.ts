@@ -397,20 +397,25 @@ export class DiscordOperator {
     const maxMessages = this.cachedConfig.max_messages ?? 25;
 
     let currMsg: Message | null = msg;
-    let existingMessages: ModelMessage[] = []; // new -> old
-    const newMessages: ModelMessage[] = []; // new -> old
+    const messages: ModelMessage[] = []; // new -> old
     const userWarnings = new Set<string>();
     let currentMessageImageIds: string[] = [];
-    while (currMsg && newMessages.length < maxMessages) {
+    while (currMsg && messages.length < maxMessages) {
       let history = this.modelMessageOperator.getAll(currMsg.id);
       if (history.length > 0) {
-        if (history.length + newMessages.length > maxMessages) {
+        if (history.length + messages.length > maxMessages) {
           userWarnings.add(Warning.messageHistoryTruncated);
-          history = history.slice(0, maxMessages - newMessages.length);
+          history = history.slice(0, maxMessages - messages.length);
         }
+        messages.push(...history.flatMap((h) => h.model_message));
 
-        existingMessages = history.flat();
-        currMsg = null;
+        const lastId = history.at(-1)!.parent_message_id;
+
+        if (lastId) {
+          currMsg = await msg.channel.messages.fetch(lastId);
+        } else {
+          currMsg = null;
+        }
       } else {
         const {
           parent,
@@ -420,13 +425,13 @@ export class DiscordOperator {
         } = await this.messageToModelMessages(currMsg);
 
         if (message) {
-          newMessages.push(message);
+          messages.push(message);
 
           // a parent not in db
           if (currMsg.id !== msg.id) {
             await this.modelMessageOperator.create({
               messageId: currMsg.id,
-              parentMessageId: msg.id,
+              parentMessageId: currMsg.reference?.messageId,
               messages: [message],
               imageIds,
             });
@@ -439,8 +444,6 @@ export class DiscordOperator {
         currMsg = parent;
       }
     }
-
-    const messages = newMessages.concat(existingMessages);
 
     console.log(
       `Message received (user ID: ${msg.author.id}, attachments: ${msg.attachments.size}, conversation length: ${messages.length}):\n${msg.content}`,
@@ -567,7 +570,7 @@ export class DiscordOperator {
         const parentIsThreadStart =
           isPublicThread &&
           !msg.reference &&
-          (msg.channel as any).parent?.type === ChannelType.GuildText;
+          msg.channel.parent?.type === ChannelType.GuildText;
         if (
           !msg.reference &&
           !content.includes(mention) &&

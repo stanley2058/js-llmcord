@@ -6,9 +6,10 @@ import type { ModelMessage } from "ai";
 
 export class ModelMessageOperator {
   getAll(messageId: string) {
-    return this.getAllRaw(messageId).map(
-      (m) => JSON.parse(m.model_message) as ModelMessage[],
-    );
+    return this.getAllRaw(messageId).map((m) => ({
+      ...m,
+      model_message: JSON.parse(m.model_message) as ModelMessage[],
+    }));
   }
 
   getAllRaw(messageId: string): DbModelMessage[] {
