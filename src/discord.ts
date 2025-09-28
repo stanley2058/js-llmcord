@@ -82,6 +82,7 @@ export class DiscordOperator {
   private imageCacheCleanupInterval: NodeJS.Timeout;
   private toolManager: ToolManager;
   private cachedConfig: Config = {} as Config;
+  private lastTypingSentAt = new Map<string, number>();
 
   constructor() {
     this.client = new Client({
@@ -261,7 +262,7 @@ export class DiscordOperator {
 
     let done = false;
     try {
-      if ("sendTyping" in msg.channel) await msg.channel.sendTyping();
+      await this.sendTyping(msg);
 
       // Decide if tools should be enabled for this model
       const params = this.cachedConfig.models[this.curProviderModel];
@@ -336,6 +337,10 @@ export class DiscordOperator {
         emb.setDescription(desc);
         emb.setColor(done ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE);
         flushed = done;
+
+        // handle continuous typing
+        if (!flushed) await this.sendTyping(msg);
+        else this.lastTypingSentAt.delete(msg.channel.id);
 
         if (pushNew || msg === lastMsg) {
           lastMsg = await this.replyHelper(msg, lastMsg, { embeds: [emb] });
@@ -604,6 +609,18 @@ export class DiscordOperator {
       messages.push({ role: "system", content: sys });
     }
 
+    if (this.cachedConfig.rag?.enable) {
+      messages.push({
+        role: "system",
+        content:
+          "You have access to long-term memory tools, use them on behalf of the following rules:\n" +
+          "- When a user shares stable facts, preferences, or ongoing goals that are useful for future conversations, store them. (`remember_user_context`)\n" +
+          "- Before giving advice that depends on user context, recall relevant memory. (`recall_user_context`)\n" +
+          "- If an item is retracted or incorrect, forget it and optionally store the update. (`forget_user_context`)\n" +
+          "Above rules also applies to you, use `user_id: 'self'` to store your own memory.",
+      });
+    }
+
     return { messages, userWarnings };
   }
 
@@ -698,6 +715,18 @@ export class DiscordOperator {
     this.msgNodes.set(id, node);
 
     return node;
+  }
+
+  private async sendTyping(msg: Message) {
+    const TYPING_EXPIRY = 8 * 1000; // actually 10s, but with some buffer
+    const now = Date.now();
+    const last = this.lastTypingSentAt.get(msg.channel.id);
+    const canTrigger = !last || now - last > TYPING_EXPIRY;
+    if (!canTrigger) return;
+    if ("sendTyping" in msg.channel) {
+      await msg.channel.sendTyping();
+      this.lastTypingSentAt.set(msg.channel.id, now);
+    }
   }
 
   async destroy() {

@@ -188,7 +188,7 @@ export function getRagTools() {
                 .string()
                 .optional()
                 .describe(
-                  "(Optional) Free-form notes; not embedded. Use for nuance or citations.",
+                  "(Optional) Free-form notes; not embedded. Use for nuance, citations, or any kind of context.",
                 ),
             }),
           )
