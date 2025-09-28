@@ -410,6 +410,10 @@ export class DiscordOperator {
   }
 
   private async buildMessages(msg: Message) {
+    const params = this.cachedConfig.models[this.curProviderModel];
+    const { tools: useTools } = params ?? {};
+    const toolsDisabledForModel = useTools === false;
+
     const visionModels = (VISION_MODEL_TAGS as readonly string[]).concat(
       this.cachedConfig.additional_vision_models || [],
     );
@@ -609,14 +613,14 @@ export class DiscordOperator {
       messages.push({ role: "system", content: sys });
     }
 
-    if (this.cachedConfig.rag?.enable) {
+    if (!toolsDisabledForModel && this.cachedConfig.rag?.enable) {
       messages.push({
         role: "system",
         content:
           "You have access to long-term memory tools, use them on behalf of the following rules:\n" +
-          "- When a user shares stable facts, preferences, or ongoing goals that are useful for future conversations, store them. (`remember_user_context`)\n" +
-          "- Before giving advice that depends on user context, recall relevant memory. (`recall_user_context`)\n" +
-          "- If an item is retracted or incorrect, forget it and optionally store the update. (`forget_user_context`)\n" +
+          "- When a user shares stable facts, preferences, or ongoing goals that are useful for future conversations, store them. (`rememberUserContext`)\n" +
+          "- Before giving advice that depends on user context, recall relevant memory. (`recallUserContext`)\n" +
+          "- If an item is retracted or incorrect, forget it and optionally store the update. (`forgetUserContext`)\n" +
           "Above rules also applies to you, use `user_id: 'self'` to store your own memory.",
       });
     }

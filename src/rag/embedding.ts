@@ -141,8 +141,7 @@ export async function removeEmbeddings(userId: string, embeddingIds: string[]) {
 
 export function getRagTools() {
   return {
-    addInformation: tool({
-      name: "remember_user_context",
+    rememberUserContext: tool({
       description:
         "Write-to-memory. Store concise, durable facts, preferences, or intents for a user (or for 'self') so future answers are more personalized.\n" +
         "When to use:\n" +
@@ -201,8 +200,7 @@ export function getRagTools() {
         await insertEmbeddings(user_id, filtered);
       },
     }),
-    searchInformation: tool({
-      name: "recall_user_context",
+    recallUserContext: tool({
       description:
         "Read-from-memory. Retrieve previously stored facts, preferences, or intents for a user (or 'self') to personalize the current answer.\n" +
         "When to use:\n" +
@@ -264,8 +262,7 @@ export function getRagTools() {
         }));
       },
     }),
-    removeInformation: tool({
-      name: "forget_user_context",
+    forgetUserContext: tool({
       description:
         "Forget-from-memory. Remove stale, incorrect, or user-retracted facts, preferences, or intents for a user (or 'self') to keep personalization accurate.\n" +
         "When to use:\n" +
@@ -276,8 +273,8 @@ export function getRagTools() {
         "- Use immediately without confirmation when the prior info would cause wrong advice.\n" +
         "- Target specific entries by `id` to avoid unintended loss.\n" +
         "Tips:\n" +
-        "- Prefer replacing: forget the old entry, then call remember_user_context with the updated one.\n" +
-        "- If unsure which to delete, first call recall_user_context to review candidates.",
+        "- Prefer replacing: forget the old entry, then call rememberUserContext with the updated one.\n" +
+        "- If unsure which to delete, first call recallUserContext to review candidates.",
       inputSchema: z.object({
         user_id: z
           .string()
