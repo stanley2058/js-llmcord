@@ -112,9 +112,9 @@ export class ModelMessageOperator {
       msgDelOffset += batch.length;
 
       const placeholders = batch.map(() => "?").join(", ");
-      db.prepare(`DELETE FROM your_table WHERE id IN (${placeholders})`).run(
-        ...batch,
-      );
+      db.prepare(
+        `DELETE FROM model_messages WHERE id IN (${placeholders})`,
+      ).run(...batch);
     }
   }
 
