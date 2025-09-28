@@ -117,4 +117,25 @@ export class ModelMessageOperator {
       );
     }
   }
+
+  async trim() {
+    const config = await getConfig();
+    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    const images = db
+      .query("SELECT uploadthing_id FROM image_cache WHERE created_at < ?")
+      .all(oneWeekAgo) as { uploadthing_id: string }[];
+
+    if (config.utApi) {
+      try {
+        await config.utApi.deleteFiles(images.map((i) => i.uploadthing_id));
+      } catch (e) {
+        console.error("Error deleting from UploadThing:", e);
+        return;
+      }
+    }
+
+    db.run("DELETE FROM image_cache WHERE created_at < ?", [oneWeekAgo]);
+    db.run("DELETE FROM model_messages WHERE created_at < ?", [oneWeekAgo]);
+  }
 }

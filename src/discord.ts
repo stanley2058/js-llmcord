@@ -82,6 +82,7 @@ export class DiscordOperator {
   private cachedConfig: Config = {} as Config;
   private lastTypingSentAt = new Map<string, number>();
   private modelMessageOperator = new ModelMessageOperator();
+  private trimInterval: NodeJS.Timeout;
 
   constructor() {
     this.client = new Client({
@@ -96,6 +97,12 @@ export class DiscordOperator {
     });
 
     this.toolManager = new ToolManager();
+
+    this.modelMessageOperator.trim().catch(console.error);
+    this.trimInterval = setInterval(
+      () => this.modelMessageOperator.trim().catch(console.error),
+      1000 * 60 * 60,
+    );
 
     this.client.once("clientReady", () => this.clientReady());
     this.client.on("interactionCreate", this.interactionCreate);
@@ -772,6 +779,7 @@ export class DiscordOperator {
   }
 
   async destroy() {
+    clearInterval(this.trimInterval);
     this.client.off("messageDelete", this.messageDelete);
     this.client.off("messageCreate", this.messageCreate);
     this.client.off("interactionCreate", this.interactionCreate);
