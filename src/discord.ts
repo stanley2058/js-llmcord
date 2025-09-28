@@ -446,17 +446,6 @@ export class DiscordOperator {
       `Message received (user ID: ${msg.author.id}, attachments: ${msg.attachments.size}, conversation length: ${messages.length}):\n${msg.content}`,
     );
 
-    if (this.cachedConfig.system_prompt) {
-      const { date, time } = nowIsoLike();
-      let sys = (this.cachedConfig.system_prompt || "")
-        .replace("{date}", date)
-        .replace("{time}", time)
-        .trim();
-      sys +=
-        "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'.";
-      messages.push({ role: "system", content: sys });
-    }
-
     if (!toolsDisabledForModel && this.cachedConfig.rag?.enable) {
       messages.push({
         role: "system",
@@ -467,6 +456,17 @@ export class DiscordOperator {
           "- If an item is retracted or incorrect, forget it and optionally store the update. (`forgetUserContext`)\n" +
           "Above rules also applies to you, use `user_id: 'self'` to store your own memory.",
       });
+    }
+
+    if (this.cachedConfig.system_prompt) {
+      const { date, time } = nowIsoLike();
+      let sys = (this.cachedConfig.system_prompt || "")
+        .replace("{date}", date)
+        .replace("{time}", time)
+        .trim();
+      sys +=
+        "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'.";
+      messages.push({ role: "system", content: sys });
     }
 
     return { messages, userWarnings, currentMessageImageIds };
