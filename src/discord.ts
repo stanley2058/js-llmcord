@@ -34,7 +34,10 @@ import { getImageUrl } from "./image";
 import { inspect } from "bun";
 import { ToolManager } from "./tool";
 import type { Config } from "./type";
-import type { StreamTextParams } from "./streaming-compatible";
+import {
+  streamTextWithCompatibleTools,
+  type StreamTextParams,
+} from "./streaming-compatible";
 import { ModelMessageOperator } from "./model-messages";
 
 const VISION_MODEL_TAGS = [
@@ -274,6 +277,7 @@ export class DiscordOperator {
         ...rest
       } = params ?? {};
       const toolsDisabledForModel = useTools === false;
+      const useCompatibleTools = useTools === "compatible";
       const restPart = params
         ? { providerOptions: { [provider]: keysToCamel(rest) } }
         : {};
@@ -295,7 +299,11 @@ export class DiscordOperator {
         stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
       };
 
-      const { textStream, finishReason, response } = streamText(opts);
+      const stream = useCompatibleTools
+        ? streamTextWithCompatibleTools(opts)
+        : streamText(opts);
+
+      const { textStream, finishReason, response } = stream;
       if (this.cachedConfig.debug_message) console.log(inspect(messages));
 
       let contentAcc = "";

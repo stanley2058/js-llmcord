@@ -1,304 +1,185 @@
 import {
   streamText,
-  type Tool,
   type FinishReason,
+  type JSONValue,
   type ModelMessage,
+  type ToolResultPart,
 } from "ai";
-import { getConfig } from "./config-parser";
+import type { ZodType } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 export type StreamTextParams = Parameters<typeof streamText>[0];
+export type StreamTextResult = Awaited<ReturnType<typeof streamText>>;
+type ResponseMessage = Awaited<
+  StreamTextResult["response"]
+>["messages"][number];
 
-export interface ParsedToolCall {
-  callId: string;
-  toolName: string;
-  /** Raw payload contained inside the tool-call tag */
-  rawArguments: string;
-  /** Attempted JSON parsing of the payload; falls back to raw text if parsing fails */
-  arguments: unknown;
-}
-
-export interface CompatibleStreamOptions
-  extends Omit<StreamTextParams, "tools"> {
-  /**
-   * Optional tools registry. They are NOT passed to the model; kept here for convenience
-   * so callers can resolve or execute tools after parsing directives.
-   */
-  tools?: Record<string, Tool>;
-  /** Hook invoked whenever plain text (sans tool markup) is produced */
-  onTextChunk?: (text: string) => void | Promise<void>;
-  /** Prefix used when generating tool call identifiers */
-  toolCallIdPrefix?: string;
-  /** Max number of compatible tool loops to run */
-  maxToolLoops?: number;
-}
-
-export interface CompatibleStreamResult {
-  /** Collapsed assistant text with tool-call directives stripped out */
-  text: string;
-  /** List of parsed tool-call directives encountered during streaming */
-  toolCalls: ParsedToolCall[];
-  /** Underlying finish reason reported by the provider */
-  finishReason: FinishReason;
-}
+// Tool syntax: <tool-call tool="{name}">{payload}</tool-call>
 
 const TOOL_CALL_PATTERN =
   /<tool-call\s+tool="([^"]+)">([\s\S]*?)<\/tool-call>/g;
-
-export async function runCompatibleStream(
-  options: CompatibleStreamOptions,
-): Promise<CompatibleStreamResult> {
-  const config = await getConfig();
-  const {
-    messages,
-    onTextChunk,
-    toolCallIdPrefix = "compatible-tool",
-    tools: toolRegistry,
-    maxToolLoops = config.max_steps ?? 10,
-    ...rest
-  } = options;
-
-  if (!messages || messages.length === 0) {
-    throw new Error("runCompatibleStream requires at least one message");
+function maybeToolCallStart(text: string) {
+  const start = "<tool-call";
+  for (let i = 0; i < Math.min(text.length, start.length); i++) {
+    if (text[i] !== start[i]) return false;
   }
+  return true;
+}
+function maybeToolCallEnd(text: string) {
+  const end = "</tool-call>";
+  for (let i = 0; i < Math.min(text.length, end.length); i++) {
+    if (text[text.length - i - 1] !== end[end.length - i - 1]) return false;
+  }
+  return true;
+}
 
-  // Prepare working state
-  let workingMessages = [...messages] as ModelMessage[];
-  let overallText = "";
-  const allParsedCalls: ParsedToolCall[] = [];
-  let callSequence = 0;
-  let finalFinish: FinishReason | undefined;
+const toolCallIdPrefix = "compatible-tool";
+export function streamTextWithCompatibleTools({
+  tools,
+  messages,
+  ...rest
+}: StreamTextParams) {
+  messages = [...(messages || [])];
 
-  // Iterative loop: stream -> parse -> maybe execute tools -> append tool results -> repeat
-  for (let step = 0; step < maxToolLoops; step++) {
-    const msgWithoutSystem = messages.filter((m) => m.role !== "system");
-    const { text, calls, finishReason } = await streamOnce({
-      messages: workingMessages,
-      onTextChunk,
-      generateCallId: () => `${toolCallIdPrefix}-${++callSequence}`,
-      rest,
-    });
+  const toolDesc = Object.entries((tools = tools || {})).map(([name, tool]) => {
+    const jsonSchema = zodToJsonSchema(tool.inputSchema as ZodType);
+    return {
+      name,
+      description: tool.description,
+      jsonSchema,
+    };
+  });
+  const compatibleSystemPrompt: ModelMessage = {
+    role: "system",
+    content:
+      "Important rule to call tools:\n" +
+      '- If you want to call a tool, you MUST ONLY output the tool call syntax: <tool-call tool="{name}">{payload}</tool-call>\n' +
+      "- Examples:\n" +
+      '  - <tool-call tool="fetch">{"url":"https://example.com","max_length":10000,"raw":false}</tool-call>\n' +
+      '  - <tool-call tool="eval">{"code":"print(\'Hello World\')"}</tool-call>\n' +
+      "\nAvailable tools:\n" +
+      JSON.stringify(toolDesc, null, 2),
+  };
 
-    overallText += text;
-    allParsedCalls.push(...calls);
-    finalFinish = finishReason;
+  const { promise: finishReason, resolve: resolveFinishReason } =
+    Promise.withResolvers<FinishReason>();
 
-    if (calls.length === 0) {
-      // No tool calls: we are done
-      break;
-    }
+  const finalResponsesAccu: ResponseMessage[] = [];
+  const { promise: finalResponses, resolve: resolveFinalResponses } =
+    Promise.withResolvers<{ messages: ResponseMessage[] }>();
 
-    // Append the assistant text for this step (if any) to the conversation
-    if (text && text.trim().length > 0) {
-      workingMessages = workingMessages.concat({
-        role: "assistant",
-        content: text,
-      } as ModelMessage);
-    }
-
-    // Execute tools and add tool result message
-    const toolResultsContent = await Promise.all(
-      calls.map(async (c) => {
-        const tool = toolRegistry ? toolRegistry[c.toolName] : undefined;
-        if (!tool || typeof tool.execute !== "function") {
-          return {
-            type: "tool-result",
-            toolCallId: c.callId,
-            toolName: c.toolName,
-            output: {
-              type: "error-text",
-              value: `Tool not available: ${c.toolName}`,
-            },
-          };
-        }
-
-        try {
-          const input = c.arguments === "" ? undefined : c.arguments;
-          const output = await tool.execute(input, {
-            messages: msgWithoutSystem,
-            toolCallId: c.callId,
-          });
-          const outputPart = toToolResultOutput(output);
-          return {
-            type: "tool-result",
-            toolCallId: c.callId,
-            toolName: c.toolName,
-            output: outputPart,
-          };
-        } catch (err) {
-          return {
-            type: "tool-result",
-            toolCallId: c.callId,
-            toolName: c.toolName,
-            output: {
-              type: "error-text",
-              value: `Tool execution failed: ${String(err)}`,
-            },
-          };
-        }
-      }),
+  if (messages.length === 0) {
+    throw new Error(
+      "streamTextWithCompatibleTools requires at least one message",
     );
-
-    // Add tool results as a single tool message
-    workingMessages = workingMessages.concat({
-      role: "tool",
-      content: toolResultsContent,
-    } as ModelMessage);
-
-    // Continue loop, prompting the model again with new messages
   }
 
-  if (!finalFinish) {
-    // Should not happen but satisfies type
-    throw new Error("streaming did not produce a finish reason");
-  }
+  let callSequence = 0;
+  const generateCallId = () => `${toolCallIdPrefix}-${++callSequence}`;
+  const textStreamOut = async function* () {
+    while (true) {
+      const { textStream, finishReason, response } = streamText({
+        ...rest,
+        messages: [compatibleSystemPrompt, ...messages],
+        prompt: undefined,
+        tools: undefined,
+      });
+
+      let buffer = "";
+      let toolMatch: RegExpExecArray | null = null;
+      for await (const chunk of textStream) {
+        if (maybeToolCallStart(buffer || chunk)) {
+          buffer += chunk;
+          continue;
+        } else {
+          buffer = "";
+        }
+        if (maybeToolCallEnd(buffer)) {
+          toolMatch = TOOL_CALL_PATTERN.exec(buffer);
+          buffer = "";
+          continue;
+        }
+
+        yield chunk;
+      }
+
+      const [, toolName, payload] = toolMatch ?? [];
+      const tool = toolName && tools?.[toolName];
+      if (!toolName || !tool || !tool.execute) {
+        resolveFinishReason(await finishReason);
+        resolveFinalResponses({ messages: finalResponsesAccu });
+        break;
+      }
+
+      // call tool
+      const callId = generateCallId();
+      const { messages: respMessages } = await response;
+      messages.push(...respMessages);
+      finalResponsesAccu.push(...respMessages);
+
+      try {
+        const toolResult: unknown = await tool.execute(tryParseJson(payload), {
+          toolCallId: callId,
+          messages: respMessages,
+        });
+
+        messages.push({
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: callId,
+              toolName,
+              output: toToolResultOutput(toolResult),
+            },
+          ],
+        });
+      } catch (err) {
+        messages.push({
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: callId,
+              toolName,
+              output: {
+                type: "error-text",
+                value: `Tool execution failed: ${String(err)}`,
+              },
+            },
+          ],
+        });
+      }
+    }
+  };
 
   return {
-    text: overallText,
-    toolCalls: allParsedCalls,
-    finishReason: finalFinish,
+    textStream: textStreamOut(),
+    finishReason,
+    response: finalResponses,
   };
 }
 
-async function streamOnce({
-  messages,
-  onTextChunk,
-  generateCallId,
-  rest,
-}: {
-  messages: ModelMessage[];
-  onTextChunk?: (text: string) => void | Promise<void>;
-  generateCallId: () => string;
-  rest: Omit<StreamTextParams, "messages" | "tools">;
-}): Promise<{
-  text: string;
-  calls: ParsedToolCall[];
-  finishReason: FinishReason;
-}> {
-  const response = streamText({
-    ...rest,
-    messages,
-    tools: undefined,
-  } as StreamTextParams);
-
-  const { textStream, finishReason } = response;
-
-  let buffer = "";
-  let textAccumulator = "";
-  const parsedCalls: ParsedToolCall[] = [];
-
-  for await (const chunk of textStream) {
-    buffer += chunk;
-    const { remainingBuffer } = await flushToolMarkup({
-      buffer,
-      onTextChunk,
-      parsedCalls,
-      textAccumulatorRef: (value) => {
-        textAccumulator += value;
-      },
-      generateCallId,
-    });
-    buffer = remainingBuffer;
+function toToolResultOutput(output: unknown): ToolResultPart["output"] {
+  if (typeof output === "string") return { type: "text", value: output };
+  // treat undefined/null as empty text
+  if (output === undefined || output === null)
+    return { type: "text", value: "" };
+  try {
+    JSON.stringify(output);
+    return { type: "json", value: output as JSONValue };
+  } catch {
+    return { type: "error-text", value: "Non-serializable tool output" };
   }
-
-  if (buffer.length > 0) {
-    const { remainingBuffer } = await flushToolMarkup({
-      buffer,
-      onTextChunk,
-      parsedCalls,
-      textAccumulatorRef: (value) => {
-        textAccumulator += value;
-      },
-      generateCallId,
-      flushRemainder: true,
-    });
-    buffer = remainingBuffer;
-  }
-
-  const finish = await finishReason;
-  return { text: textAccumulator, calls: parsedCalls, finishReason: finish };
 }
 
-type FlushArgs = {
-  buffer: string;
-  parsedCalls: ParsedToolCall[];
-  textAccumulatorRef: (value: string) => void;
-  generateCallId: () => string;
-  onTextChunk?: (text: string) => void | Promise<void>;
-  flushRemainder?: boolean;
-};
-
-async function flushToolMarkup({
-  buffer,
-  parsedCalls,
-  textAccumulatorRef,
-  generateCallId,
-  onTextChunk,
-  flushRemainder = false,
-}: FlushArgs): Promise<{ remainingBuffer: string }> {
-  let lastIndex = 0;
-  TOOL_CALL_PATTERN.lastIndex = 0;
-
-  while (true) {
-    const match = TOOL_CALL_PATTERN.exec(buffer);
-    if (!match) break;
-
-    const [matched, toolName, payload] = match;
-    const preceding = buffer.slice(lastIndex, match.index);
-    if (preceding) {
-      textAccumulatorRef(preceding);
-      if (onTextChunk) await onTextChunk(preceding);
-    }
-
-    if (toolName === undefined || payload === undefined) {
-      textAccumulatorRef(matched);
-      if (onTextChunk) await onTextChunk(matched);
-      lastIndex = match.index + matched.length;
-      continue;
-    }
-
-    const callId = generateCallId();
-    parsedCalls.push({
-      callId,
-      toolName,
-      rawArguments: payload,
-      arguments: tryParseJson(payload),
-    });
-
-    lastIndex = match.index + matched.length;
-  }
-
-  const remaining = buffer.slice(lastIndex);
-
-  if (flushRemainder && remaining) {
-    textAccumulatorRef(remaining);
-    if (onTextChunk) await onTextChunk(remaining);
-    return { remainingBuffer: "" };
-  }
-
-  return { remainingBuffer: remaining };
-}
-
-function tryParseJson(raw: string): unknown {
+function tryParseJson(raw: string | undefined): unknown {
+  if (!raw) return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return "";
   try {
     return JSON.parse(trimmed);
   } catch (error) {
     return trimmed;
-  }
-}
-
-function toToolResultOutput(output: unknown): any {
-  if (typeof output === "string") return { type: "text", value: output };
-  // treat undefined/null as empty text
-  if (output === undefined || output === null)
-    return { type: "text", value: "" };
-  // numbers, booleans, arrays, objects -> json
-  try {
-    // Ensure it's JSON-serializable
-    JSON.stringify(output);
-    return { type: "json", value: output };
-  } catch {
-    return { type: "error-text", value: "Non-serializable tool output" };
   }
 }
