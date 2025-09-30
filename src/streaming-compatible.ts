@@ -15,8 +15,6 @@ type ResponseMessage = Awaited<
 
 // Tool syntax: <tool-call tool="{name}">{payload}</tool-call>
 
-const TOOL_CALL_PATTERN =
-  /<tool-call\s+tool="([^"]+)">([\s\S]*?)<\/tool-call>/g;
 const TOOL_CALL_SINGLE = /<tool-call\s+tool="([^"]+)">([\s\S]*?)<\/tool-call>/;
 function maybeToolCallStart(text: string) {
   const start = "<tool-call";

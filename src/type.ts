@@ -62,8 +62,7 @@ export type LocalMCPConfig = {
 export type RemoteMCPConfig = {
   type: "http" | "sse";
   url: string;
-  opts?: Record<string, string | number | boolean>;
-};
+} & Record<string, string | number | boolean>;
 
 export type Providers =
   | "openai"

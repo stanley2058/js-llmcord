@@ -94,7 +94,7 @@ tools:
       type: "http"
       url: https://mcp.context7.com/mcp
       headers:
-        CONTEXT7_API_KEY: 
+        Authorization: Bearer <CONTEXT7_API_KEY>
 
 # (optional) RAG
 # You MUST have official OpenAI API base_url and api_key configured to use RAG

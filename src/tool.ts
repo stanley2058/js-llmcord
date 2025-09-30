@@ -26,16 +26,18 @@ export class ToolManager {
     for (const [name, config] of Object.entries(tools.remote_mcp || {})) {
       switch (config.type) {
         case "http": {
-          const { url, opts } = config;
+          const { type: _, url, ...opts } = config;
           const client = await createMCPClient({
-            transport: new StreamableHTTPClientTransport(new URL(url), opts),
+            transport: new StreamableHTTPClientTransport(new URL(url), {
+              requestInit: opts,
+            }),
           });
 
           this.mcps[`remote_${name}`] = client;
           break;
         }
         case "sse": {
-          const { url, opts } = config;
+          const { type: _, url, ...opts } = config;
           const client = await createMCPClient({
             transport: {
               type: "sse",
