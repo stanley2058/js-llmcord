@@ -9,12 +9,8 @@ import {
 
 export type StreamTextParams = Parameters<typeof streamText>[0];
 export type StreamTextResult = Awaited<ReturnType<typeof streamText>>;
-type ResponseMessage = Awaited<
-  StreamTextResult["response"]
->["messages"][number];
 
 // Tool syntax: <tool-call tool="{name}">{payload}</tool-call>
-
 const TOOL_CALL_SINGLE = /<tool-call\s+tool="([^"]+)">([\s\S]*?)<\/tool-call>/;
 function maybeToolCallStart(text: string) {
   const start = "<tool-call";
@@ -61,9 +57,9 @@ export function streamTextWithCompatibleTools({
   const { promise: finishReason, resolve: resolveFinishReason } =
     Promise.withResolvers<FinishReason>();
 
-  const finalResponsesAccu: ResponseMessage[] = [];
+  const finalResponsesAccu: ModelMessage[] = [];
   const { promise: finalResponses, resolve: resolveFinalResponses } =
-    Promise.withResolvers<{ messages: ResponseMessage[] }>();
+    Promise.withResolvers<{ messages: ModelMessage[] }>();
 
   if (messages.length === 0) {
     throw new Error(
@@ -124,6 +120,10 @@ export function streamTextWithCompatibleTools({
         inToolCall = false;
       }
 
+      const { messages: respMessages } = await response;
+      messages.push(...respMessages);
+      finalResponsesAccu.push(...respMessages);
+
       const [, toolName, payload] = toolMatch ?? [];
       const tool = toolName && tools?.[toolName];
       if (!toolName || !tool || !tool.execute) {
@@ -141,18 +141,14 @@ export function streamTextWithCompatibleTools({
 
       // call tool
       const callId = generateCallId();
-      const { messages: respMessages } = await response;
-      messages.push(...respMessages);
-      finalResponsesAccu.push(...respMessages);
-
       try {
         const toolResult: unknown = await tool.execute(tryParseJson(payload), {
           toolCallId: callId,
           messages: respMessages,
         });
 
-        messages.push({
-          role: "system",
+        const msg: ModelMessage = {
+          role: "assistant",
           content: JSON.stringify([
             {
               type: "tool-result",
@@ -161,10 +157,12 @@ export function streamTextWithCompatibleTools({
               output: toToolResultOutput(toolResult),
             },
           ]),
-        });
+        };
+        messages.push(msg);
+        finalResponsesAccu.push(msg);
       } catch (err) {
-        messages.push({
-          role: "system",
+        const msg: ModelMessage = {
+          role: "assistant",
           content: JSON.stringify([
             {
               type: "tool-result",
@@ -176,7 +174,9 @@ export function streamTextWithCompatibleTools({
               },
             },
           ]),
-        });
+        };
+        messages.push(msg);
+        finalResponsesAccu.push(msg);
       }
 
       if (carryOver) {

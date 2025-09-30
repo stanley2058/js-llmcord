@@ -39,6 +39,7 @@ import {
   type StreamTextParams,
 } from "./streaming-compatible";
 import { ModelMessageOperator } from "./model-messages";
+import { buildToolAuditNote, stripToolTraffic } from "./tool-transform";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -418,10 +419,20 @@ export class DiscordOperator {
       }
 
       const resp = await response;
+      const toolSummary = buildToolAuditNote(resp.messages);
+      const stripped = stripToolTraffic(resp.messages);
+      if (stripped[0]?.role === "assistant" && toolSummary) {
+        if (typeof stripped[0].content === "string") {
+          stripped[0].content += `\n\n${toolSummary}`;
+        } else {
+          stripped[0].content.push({ type: "text", text: toolSummary });
+        }
+      }
+
       await this.modelMessageOperator.create({
         messageId: discordMessageCreated,
         parentMessageId: msg.id,
-        messages: resp.messages,
+        messages: stripped,
         imageIds:
           currentMessageImageIds.length > 0
             ? currentMessageImageIds
