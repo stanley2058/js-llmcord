@@ -113,7 +113,7 @@ export class ModelMessageOperator {
 
       const placeholders = batch.map(() => "?").join(", ");
       db.prepare(
-        `DELETE FROM model_messages WHERE id IN (${placeholders})`,
+        `DELETE FROM model_messages WHERE message_id IN (${placeholders})`,
       ).run(...batch);
     }
   }
