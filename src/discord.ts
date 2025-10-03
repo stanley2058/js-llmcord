@@ -419,13 +419,16 @@ export class DiscordOperator {
       }
 
       const resp = await response;
-      const toolSummary = buildToolAuditNote(resp.messages);
       const stripped = stripToolTraffic(resp.messages);
-      if (stripped[0]?.role === "assistant" && toolSummary) {
-        if (typeof stripped[0].content === "string") {
-          stripped[0].content += `\n\n${toolSummary}`;
-        } else {
-          stripped[0].content.push({ type: "text", text: toolSummary });
+
+      if (this.cachedConfig.tools?.include_summary) {
+        const toolSummary = buildToolAuditNote(resp.messages);
+        if (stripped[0]?.role === "assistant" && toolSummary) {
+          if (typeof stripped[0].content === "string") {
+            stripped[0].content += `\n\n${toolSummary}`;
+          } else {
+            stripped[0].content.push({ type: "text", text: toolSummary });
+          }
         }
       }
 

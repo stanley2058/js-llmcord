@@ -29,6 +29,7 @@ export type Config = {
   providers: Record<Providers, ProviderConfig>;
   models: Record<string, Record<string, string | number | boolean> | undefined>;
   tools?: {
+    include_summary?: boolean;
     local_mcp?: Record<string, LocalMCPConfig>;
     remote_mcp?: Record<string, RemoteMCPConfig>;
   };

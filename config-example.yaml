@@ -84,6 +84,7 @@ models:
   ollama/llama4:
 
 tools:
+  include_summary: false
   local_mcp:
     fetch:
       command: uvx
