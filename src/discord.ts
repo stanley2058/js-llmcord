@@ -529,7 +529,19 @@ export class DiscordOperator {
         .replace("{time}", time)
         .trim();
       sys +=
-        "\n\nUser's names are their Discord IDs and should be typed as '<@ID>'.";
+        "\n\n" +
+        "<discord-system>\n" +
+        "- Users' names are their Discord IDs and should be typed as '<@ID>'.\n" +
+        "- There might be multiple people tagging you in the chat; identify different people using their ID.\n" +
+        "  <example>\n" +
+        "    <message>\n" +
+        "    user_id: 123456789\n" +
+        "    username: exampleUser1234\n" +
+        "    content: |\n" +
+        "    Hello world.\n" +
+        "    </message>\n" +
+        "  </example>\n" +
+        "</discord-system>\n";
       messages.push({ role: "system", content: sys });
     }
 
@@ -683,12 +695,23 @@ export class DiscordOperator {
       if (contentArr === "") return { parent };
       if (role === "user") {
         const userId = msg.author.id;
+        const username = msg.author.username;
         if (typeof contentArr === "string") {
-          contentArr = `[name=${String(userId)}]: ${contentArr}`;
+          contentArr =
+            "<message>\n" +
+            `user_id: ${userId}\n` +
+            `username: ${username}\n` +
+            `content: |\n${contentArr}\n` +
+            "</message>\n";
         } else {
           for (const c of contentArr || []) {
             if (c.type !== "text") continue;
-            c.text = `[name=${String(userId)}]: ${c.text}`;
+            c.text =
+              "<message>\n" +
+              `user_id: ${userId}\n` +
+              `username: ${username}\n` +
+              `content: |\n${c.text}\n` +
+              "</message>\n";
           }
         }
 
