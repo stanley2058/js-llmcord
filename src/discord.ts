@@ -516,7 +516,10 @@ export class DiscordOperator {
 
     if (!toolsDisabledForModel && this.cachedConfig.rag?.enable) {
       const userIds = getUsersFromModelMessages(messages);
-      const memories = await getRecommendedMemoryStringForUsers([...userIds]);
+      const memories = await getRecommendedMemoryStringForUsers([
+        ...userIds,
+        "self",
+      ]);
       messages.push(...memories);
 
       messages.push({
