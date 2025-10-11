@@ -1,7 +1,7 @@
 export type RagContent = {
   id: string;
   full_content: string;
-  created_at: number;
+  created_at: string;
 };
 export type RagContentCreate = Omit<RagContent, "id" | "created_at">;
 
@@ -13,7 +13,7 @@ export type RagEmbedding = {
   type: "intent" | "fact" | "preference";
   relevance: number;
   embedding: number[];
-  created_at: number;
+  created_at: string;
 
   cos_sim?: number;
 };

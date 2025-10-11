@@ -40,6 +40,10 @@ import {
 } from "./streaming-compatible";
 import { ModelMessageOperator } from "./model-messages";
 import { buildToolAuditNote, stripToolTraffic } from "./tool-transform";
+import {
+  getRecommendedMemoryStringForUsers,
+  getUsersFromModelMessages,
+} from "./rag/recommend";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -511,6 +515,10 @@ export class DiscordOperator {
     );
 
     if (!toolsDisabledForModel && this.cachedConfig.rag?.enable) {
+      const userIds = getUsersFromModelMessages(messages);
+      const memories = await getRecommendedMemoryStringForUsers([...userIds]);
+      messages.push(...memories);
+
       messages.push({
         role: "system",
         content:
