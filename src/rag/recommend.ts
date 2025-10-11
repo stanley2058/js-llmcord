@@ -25,7 +25,7 @@ export async function getRecommendedMemoryForUser(userId: string) {
   const results = await sql<RagEmbedding[]>`
     SELECT *
     FROM embeddings
-    WHERE e.user_id = ${userId};
+    WHERE user_id = ${userId};
   `;
 
   if (!results?.length) return { intent: [], fact: [], preference: [] };
