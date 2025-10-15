@@ -1,7 +1,10 @@
 import {
+  ActionRowBuilder,
   ActivityType,
   ApplicationCommandOptionType,
   ApplicationCommandType,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   Collection,
@@ -13,7 +16,10 @@ import {
   Message,
   MessageFlags,
   MessageType,
+  ModalBuilder,
   Partials,
+  TextInputBuilder,
+  TextInputStyle,
   type CacheType,
   type Interaction,
   type RESTPostAPIApplicationCommandsJSONBody,
@@ -64,8 +70,8 @@ const VISION_MODEL_TAGS = [
 const STREAMING_INDICATOR = " ⚪";
 const EDIT_DELAY_SECONDS = 1;
 
-const EMBED_COLOR_COMPLETE = Colors.DarkGreen;
-const EMBED_COLOR_INCOMPLETE = Colors.Orange;
+const EMBED_COLOR_COMPLETE = Colors.Blue;
+const EMBED_COLOR_INCOMPLETE = Colors.Yellow;
 
 const Warning = {
   maxText: "⚠️ Exceeding max text length per message.",
@@ -172,6 +178,32 @@ export class DiscordOperator {
 
   private interactionCreate = async (interaction: Interaction<CacheType>) => {
     this.cachedConfig = await getConfig();
+
+    if (
+      interaction.isButton() &&
+      interaction.customId === "show_reasoning_modal"
+    ) {
+      const messageId = interaction.message.id;
+      const reasoning = this.modelMessageOperator.getReasoning(messageId);
+      const existing = reasoning?.reasoning_summary ?? "No reasoning found.";
+
+      const modal = new ModalBuilder()
+        .setCustomId(`reasoning_modal:${messageId}`)
+        .setTitle("Reasoning summary");
+
+      const input = new TextInputBuilder()
+        .setCustomId("reasoning_text")
+        .setLabel("Model's reasoning summary")
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(existing.slice(0, 1900))
+        .setRequired(false);
+
+      const row = new ActionRowBuilder<TextInputBuilder>().addComponents(input);
+      modal.addComponents(row);
+
+      await interaction.showModal(modal);
+      return;
+    }
 
     if (interaction.type === InteractionType.ApplicationCommandAutocomplete) {
       const focused = interaction.options.getFocused(true);
@@ -312,7 +344,7 @@ export class DiscordOperator {
           ? streamTextWithCompatibleTools(opts)
           : streamText(opts);
 
-      const { textStream, finishReason, response } = stream;
+      const { textStream, finishReason, response, reasoning } = stream;
       if (this.cachedConfig.debug_message) console.log(inspect(messages));
 
       let contentAcc = "";
@@ -436,6 +468,9 @@ export class DiscordOperator {
         }
       }
 
+      const reasoningSummary = (await reasoning)
+        .map((r) => r.text)
+        .join("\n\n");
       await this.modelMessageOperator.create({
         messageId: discordMessageCreated,
         parentMessageId: msg.id,
@@ -444,7 +479,18 @@ export class DiscordOperator {
           currentMessageImageIds.length > 0
             ? currentMessageImageIds
             : undefined,
+        reasoningSummary,
       });
+
+      if (reasoningSummary) {
+        const button = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId("show_reasoning_modal")
+            .setLabel("Show reasoning")
+            .setStyle(ButtonStyle.Secondary),
+        );
+        lastMsg.edit({ components: [button] });
+      }
     } catch (e) {
       done = true;
       console.error("Error while generating response", e);

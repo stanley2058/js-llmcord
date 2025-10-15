@@ -1,5 +1,5 @@
 import db from "./db";
-import type { DbModelMessage } from "./type";
+import type { DbMessageReasoning, DbModelMessage } from "./type";
 import JSON from "superjson";
 import { getConfig } from "./config-parser";
 import type { ModelMessage } from "ai";
@@ -23,16 +23,25 @@ export class ModelMessageOperator {
     return [message];
   }
 
+  getReasoning(messageId: string) {
+    const reasoning = db
+      .query(`SELECT * FROM message_reasoning WHERE message_id = ?`)
+      .get(messageId) as DbMessageReasoning | null;
+    return reasoning;
+  }
+
   async create({
     messageId,
     parentMessageId,
     messages,
     imageIds,
+    reasoningSummary,
   }: {
     messageId: string | string[];
     parentMessageId?: string;
     messages: ModelMessage[];
     imageIds?: string[];
+    reasoningSummary?: string;
   }) {
     const messageIds = Array.isArray(messageId) ? messageId : [messageId];
 
@@ -46,6 +55,13 @@ export class ModelMessageOperator {
           parentMessageId ?? null,
           Date.now(),
         ],
+      );
+    }
+
+    if (reasoningSummary) {
+      db.run(
+        "INSERT INTO message_reasoning (message_id, reasoning_summary, created_at) VALUES (?, ?, ?)",
+        [messageIds.at(-1)!, reasoningSummary, Date.now()],
       );
     }
   }
@@ -115,6 +131,9 @@ export class ModelMessageOperator {
       db.prepare(
         `DELETE FROM model_messages WHERE message_id IN (${placeholders})`,
       ).run(...batch);
+      db.prepare(
+        `DELETE FROM message_reasoning WHERE message_id IN (${placeholders})`,
+      ).run(...batch);
     }
   }
 
@@ -137,5 +156,6 @@ export class ModelMessageOperator {
 
     db.run("DELETE FROM image_cache WHERE created_at < ?", [oneWeekAgo]);
     db.run("DELETE FROM model_messages WHERE created_at < ?", [oneWeekAgo]);
+    db.run("DELETE FROM message_reasoning WHERE created_at < ?", [oneWeekAgo]);
   }
 }

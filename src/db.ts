@@ -21,5 +21,12 @@ db.run(`
     created_at INTEGER NOT NULL
   )
 `);
+db.run(`
+  CREATE TABLE IF NOT EXISTS message_reasoning (
+    message_id TEXT PRIMARY KEY,
+    reasoning_summary TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )
+`);
 
 export default db;

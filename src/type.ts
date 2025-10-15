@@ -79,3 +79,9 @@ export type DbModelMessage = {
   parent_message_id: string | null;
   created_at: number;
 };
+
+export type DbMessageReasoning = {
+  message_id: string;
+  reasoning_summary: string;
+  created_at: number;
+};

@@ -4,6 +4,7 @@ import {
   type FinishReason,
   type JSONValue,
   type ModelMessage,
+  type ReasoningOutput,
   type ToolResultPart,
 } from "ai";
 
@@ -57,9 +58,12 @@ export function streamTextWithCompatibleTools({
   const { promise: finishReason, resolve: resolveFinishReason } =
     Promise.withResolvers<FinishReason>();
 
+  const reasoningMessages: ReasoningOutput[] = [];
   const finalResponsesAccu: ModelMessage[] = [];
   const { promise: finalResponses, resolve: resolveFinalResponses } =
     Promise.withResolvers<{ messages: ModelMessage[] }>();
+  const { promise: reasoning, resolve: resolveReasoning } =
+    Promise.withResolvers<ReasoningOutput[]>();
 
   if (messages.length === 0) {
     throw new Error(
@@ -71,7 +75,7 @@ export function streamTextWithCompatibleTools({
   const generateCallId = () => `${toolCallIdPrefix}-${++callSequence}`;
   const textStreamOut = async function* () {
     while (true) {
-      const { textStream, finishReason, response } = streamText({
+      const { textStream, finishReason, response, reasoning } = streamText({
         ...rest,
         messages: [compatibleSystemPrompt, ...messages],
         prompt: undefined,
@@ -123,10 +127,12 @@ export function streamTextWithCompatibleTools({
       const { messages: respMessages } = await response;
       messages.push(...respMessages);
       finalResponsesAccu.push(...respMessages);
+      reasoningMessages.push(...(await reasoning));
 
       const [, toolName, payload] = toolMatch ?? [];
       const tool = toolName && tools?.[toolName];
       if (!toolName || !tool || !tool.execute) {
+        resolveReasoning(reasoningMessages);
         resolveFinishReason(await finishReason);
 
         if (carryOver) {
@@ -190,6 +196,7 @@ export function streamTextWithCompatibleTools({
     textStream: textStreamOut(),
     finishReason,
     response: finalResponses,
+    reasoning,
   };
 }
 
