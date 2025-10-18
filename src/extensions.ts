@@ -11,6 +11,7 @@ export async function loadExtensions() {
 
   const tools = await Promise.allSettled(
     extensionFiles.map(async (f) => {
+      console.log(`Loading extension [${f}]`);
       const mod = await import(`../extensions/${f}`);
       return mod.default() as Promise<Record<string, Tool>>;
     }),
