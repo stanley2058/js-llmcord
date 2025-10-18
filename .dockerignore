@@ -3,4 +3,5 @@ node_modules
 config/*
 !config/.gitkeep
 config.yaml
-
+extensions/*
+!extensions/.gitignore
