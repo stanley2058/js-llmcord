@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { getConfig } from "./config-parser";
 import { getRagTools } from "./rag/embedding";
 import { pg } from "./rag/db";
+import { loadExtensions } from "./extensions";
 
 export type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
 
@@ -79,11 +80,20 @@ export class ToolManager {
       console.error("Error fetching tools:", errors);
     }
 
-    const tools =
+    let tools: Record<string, Tool> =
       success.length > 0
         ? success.reduce((acc, tool) => ({ ...acc, ...tool }))
-        : undefined;
-    if (this.ragTools) return { ...this.ragTools, ...tools };
+        : {};
+
+    try {
+      const extensions = await loadExtensions();
+      if (extensions) tools = { ...tools, ...extensions };
+    } catch (e) {
+      console.error("Error loading extensions:", e);
+    }
+
+    if (this.ragTools) tools = { ...this.ragTools, ...tools };
+    if (Object.keys(tools).length === 0) return undefined;
     return tools;
   }
 
