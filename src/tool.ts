@@ -11,7 +11,9 @@ export type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
 
 export class ToolManager {
   private mcps: Record<string, MCPClient> = {};
+  private mcpTools?: Record<string, Tool>;
   private ragTools?: Record<string, Tool>;
+  private extensions?: Record<string, Tool>;
 
   async init() {
     const { tools = {}, rag } = await getConfig();
@@ -55,6 +57,9 @@ export class ToolManager {
         }
       }
     }
+    if (Object.keys(this.mcps).length > 0) {
+      this.mcpTools = await this.getMcpTools();
+    }
 
     if (rag?.enable) {
       console.log("[RAG] register RAG tools");
@@ -63,9 +68,16 @@ export class ToolManager {
       console.log("[RAG] ensure table");
       await pg();
     }
+
+    try {
+      const extensions = await loadExtensions();
+      if (extensions) this.extensions = extensions;
+    } catch (e) {
+      console.error("Error loading extensions:", e);
+    }
   }
 
-  async getTools() {
+  async getMcpTools() {
     const queryResult = await Promise.allSettled(
       Object.values(this.mcps).map((mcp) => mcp.tools()),
     );
@@ -80,19 +92,17 @@ export class ToolManager {
       console.error("Error fetching tools:", errors);
     }
 
-    let tools: Record<string, Tool> =
-      success.length > 0
-        ? success.reduce((acc, tool) => ({ ...acc, ...tool }))
-        : {};
+    return success.reduce(
+      (acc, tool) => ({ ...acc, ...tool }),
+      {} as Record<string, Tool>,
+    );
+  }
 
-    try {
-      const extensions = await loadExtensions();
-      if (extensions) tools = { ...tools, ...extensions };
-    } catch (e) {
-      console.error("Error loading extensions:", e);
-    }
-
-    if (this.ragTools) tools = { ...this.ragTools, ...tools };
+  async getTools() {
+    let tools: Record<string, Tool> = {};
+    if (this.mcpTools) tools = { ...tools, ...this.mcpTools };
+    if (this.extensions) tools = { ...tools, ...this.extensions };
+    if (this.ragTools) tools = { ...tools, ...this.ragTools };
     if (Object.keys(tools).length === 0) return undefined;
     return tools;
   }
