@@ -292,6 +292,8 @@ export class DiscordOperator {
     } else {
       console.log(`Using: [${provider}] w/ [${model}]`);
     }
+    const isAnthropic =
+      provider === "anthropic" || model.startsWith("anthropic/");
     const modelInstance = providers[provider]!(model);
     const { messages, userWarnings, currentMessageImageIds } =
       await this.buildMessages(msg);
@@ -334,6 +336,20 @@ export class DiscordOperator {
       const tools = toolsDisabledForModel
         ? undefined
         : await this.toolManager.getTools();
+
+      if (isAnthropic) {
+        console.log(
+          "Patching system message for Anthropic API with cache enabled",
+        );
+        for (const msg of messages) {
+          if (msg.role !== "system") continue;
+          msg.providerOptions = {
+            ...msg.providerOptions,
+            // default is 5 mins
+            cacheControl: { type: "ephemeral" },
+          };
+        }
+      }
 
       const opts: StreamTextParams = {
         model: modelInstance,
