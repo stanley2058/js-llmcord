@@ -55,6 +55,8 @@ providers:
   x-ai:
     base_url: https://api.x.ai/v1
     api_key: 
+  ai-gateway:
+    # remember to set env AI_GATEWAY_API_KEY
 
   # Local providers:
   lmstudio:

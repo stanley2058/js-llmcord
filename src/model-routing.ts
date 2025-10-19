@@ -11,7 +11,13 @@ import type { Providers } from "./type";
 
 export async function getProvidersFromConfig() {
   const config = await getConfig();
-  const preConfigurable = ["openai", "x-ai", "anthropic", "openrouter"];
+  const preConfigurable = [
+    "openai",
+    "x-ai",
+    "anthropic",
+    "openrouter",
+    "ai-gateway",
+  ];
   const openaiCompatibleProviders = Object.keys(config.providers).filter(
     (p) => !preConfigurable.includes(p),
   );
@@ -44,6 +50,9 @@ export async function getProvidersFromConfig() {
           headers: config.providers.openrouter.extra_headers,
           extraBody: config.providers.openrouter.extra_body,
         })
+      : null,
+    "ai-gateway": config.providers["ai-gateway"]
+      ? (model: string) => model
       : null,
     ...Object.fromEntries(
       openaiCompatibleProviders.map((p) => [

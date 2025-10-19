@@ -70,6 +70,7 @@ export type Providers =
   | "x-ai"
   | "openrouter"
   | "anthropic"
+  | "ai-gateway"
   | (string & {});
 
 export type DbModelMessage = {
