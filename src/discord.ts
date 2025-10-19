@@ -908,20 +908,18 @@ async function fetchAttachmentText(url: string) {
 function nowIsoLike() {
   const d = new Date();
   const pad = (n: number, z = 2) => String(n).padStart(z, "0");
-  const sign = d.getTimezoneOffset() > 0 ? "-" : "+";
-  const off = Math.abs(d.getTimezoneOffset());
-  const hh = pad(Math.floor(off / 60));
-  const mm = pad(off % 60);
   const tzShort =
     d.toLocaleTimeString("en-US", { timeZoneName: "short" }).split(" ").pop() ||
     "UTC";
+  const date = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    weekday: "short",
+  });
   return {
-    date: d.toLocaleDateString("en-US", {
-      month: "long",
-      day: "2-digit",
-      year: "numeric",
-    }),
-    time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${tzShort}${sign}${hh}${mm}`,
+    date: `${date} (${tzShort})`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())} (${tzShort})`,
   };
 }
 
