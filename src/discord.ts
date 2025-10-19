@@ -317,6 +317,7 @@ export class DiscordOperator {
       const params = this.cachedConfig.models[this.curProviderModel];
       const {
         tools: useTools,
+        anthropic_cache_control,
         temperature,
         max_tokens,
         top_p,
@@ -337,7 +338,7 @@ export class DiscordOperator {
         ? undefined
         : await this.toolManager.getTools();
 
-      if (isAnthropic) {
+      if (isAnthropic && anthropic_cache_control) {
         console.log(
           "Patching system message for Anthropic API with cache enabled",
         );

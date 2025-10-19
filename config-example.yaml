@@ -83,6 +83,7 @@ models:
     reasoning_effort: high
 
   openrouter/anthropic/claude-sonnet-4:
+    anthropic_cache_control: false
 
   ollama/llama4:
 
