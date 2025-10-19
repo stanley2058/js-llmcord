@@ -277,13 +277,21 @@ export class DiscordOperator {
       channelIds,
     });
     if (!canRespond) return;
-    const { provider, model } = parseProviderModelString(this.curProviderModel);
+    const { provider, model, gatewayAdapter } = parseProviderModelString(
+      this.curProviderModel,
+    );
     const providers = await getProvidersFromConfig();
     if (!providers[provider]) {
       console.error(`Configuration not found for provider: ${provider}`);
       return;
     }
-    console.log(`Using: [${provider}] w/ [${model}]`);
+    if (gatewayAdapter) {
+      console.log(
+        `Using: [${provider}] w/ [${model}] via [AI-GATEWAY (${gatewayAdapter})]`,
+      );
+    } else {
+      console.log(`Using: [${provider}] w/ [${model}]`);
+    }
     const modelInstance = providers[provider]!(model);
     const { messages, userWarnings, currentMessageImageIds } =
       await this.buildMessages(msg);
@@ -316,7 +324,11 @@ export class DiscordOperator {
       const toolsDisabledForModel = useTools === false;
       const useCompatibleTools = useTools === "compatible";
       const restPart = params
-        ? { providerOptions: { [provider]: keysToCamel(rest) } }
+        ? {
+            providerOptions: {
+              [gatewayAdapter ?? provider]: keysToCamel(rest),
+            },
+          }
         : {};
 
       const tools = toolsDisabledForModel

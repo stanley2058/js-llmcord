@@ -80,5 +80,8 @@ export function parseProviderModelString(providerModel: string) {
   const firstSlash = providerModel.indexOf("/");
   const provider = providerModel.slice(0, firstSlash) as Providers;
   const model = providerModel.slice(firstSlash + 1);
-  return { provider, model };
+
+  if (provider !== "ai-gateway") return { provider, model };
+  const gatewayAdapter = model.slice(0, model.indexOf("/"));
+  return { provider, model, gatewayAdapter };
 }
