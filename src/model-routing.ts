@@ -8,6 +8,7 @@ import {
   type OpenAICompatibleProvider,
 } from "@ai-sdk/openai-compatible";
 import type { Providers } from "./type";
+import { createGateway } from "ai";
 
 export async function getProvidersFromConfig() {
   const config = await getConfig();
@@ -52,7 +53,10 @@ export async function getProvidersFromConfig() {
         })
       : null,
     "ai-gateway": config.providers["ai-gateway"]
-      ? (model: string) => model
+      ? createGateway({
+          baseURL: config.providers["ai-gateway"].base_url,
+          apiKey: config.providers["ai-gateway"].api_key,
+        })
       : null,
     ...Object.fromEntries(
       openaiCompatibleProviders.map((p) => [
