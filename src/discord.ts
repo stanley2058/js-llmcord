@@ -284,13 +284,14 @@ export class DiscordOperator {
       });
     }
     if (interaction.commandName === "reload-tools") {
+      await interaction.deferReply({
+        flags: isDM ? MessageFlags.Ephemeral : undefined,
+      });
+      await interaction.editReply({ content: "Reloading tools..." });
       await this.toolManager.destroy();
       await this.toolManager.init();
       this.logger.logDebug("[Interaction] reload-tools");
-      interaction.reply({
-        content: "Tools reloaded.",
-        flags: isDM ? MessageFlags.Ephemeral : undefined,
-      });
+      await interaction.editReply({ content: "Tools reloaded." });
     }
   };
 
