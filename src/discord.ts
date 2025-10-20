@@ -395,6 +395,12 @@ export class DiscordOperator {
         ...restPart,
         tools,
         stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
+        onStepFinish: (step) => {
+          for (const toolCall of step.toolCalls || []) {
+            this.logger.logInfo(`[Tool Call] Called: \`${toolCall.toolName}\``);
+            this.logger.logDebug(JSON.stringify(toolCall.input));
+          }
+        },
       };
 
       if (tools && useCompatibleTools)
