@@ -253,13 +253,6 @@ export class DiscordOperator {
           }
         }
       }
-
-      if (interaction.commandName === "reload-tools") {
-        if (interaction.responded) return;
-        this.logger.logDebug("[Interaction] reload-tools");
-        await this.toolManager.destroy();
-        await this.toolManager.init();
-      }
       return;
     }
 
@@ -289,6 +282,11 @@ export class DiscordOperator {
         content: output,
         flags: isDM ? MessageFlags.Ephemeral : undefined,
       });
+    }
+    if (interaction.commandName === "reload-tools") {
+      await this.toolManager.destroy();
+      await this.toolManager.init();
+      this.logger.logDebug("[Interaction] reload-tools");
     }
   };
 
