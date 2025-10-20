@@ -257,9 +257,9 @@ export class DiscordOperator {
     }
 
     if (!interaction.isChatInputCommand()) return;
+    const isDM = interaction.channel?.type === ChannelType.DM;
     if (interaction.commandName === "model") {
       const model = interaction.options.getString("model", true);
-      const isDM = interaction.channel?.type === ChannelType.DM;
       const adminIds = decodeIds(this.cachedConfig.permissions.users.admin_ids);
       const userIsAdmin = adminIds.has(interaction.user.id);
       let output = "";
@@ -287,6 +287,10 @@ export class DiscordOperator {
       await this.toolManager.destroy();
       await this.toolManager.init();
       this.logger.logDebug("[Interaction] reload-tools");
+      interaction.reply({
+        content: "Tools reloaded.",
+        flags: isDM ? MessageFlags.Ephemeral : undefined,
+      });
     }
   };
 
