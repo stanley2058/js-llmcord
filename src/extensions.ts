@@ -1,8 +1,13 @@
 import type { Tool } from "ai";
 import { readdir } from "fs/promises";
 import path from "path";
+import { getConfig } from "./config-parser";
+import { Logger } from "./logger";
 
 export async function loadExtensions() {
+  const { log_level } = await getConfig();
+  const logger = new Logger({ module: "extensions", logLevel: log_level });
+
   const files = await readdir(path.join(import.meta.dirname, "../extensions/"));
   const extensionFiles = files.filter((f) => {
     if (f === "example.ts") return false;
@@ -11,7 +16,7 @@ export async function loadExtensions() {
 
   const tools = await Promise.allSettled(
     extensionFiles.map(async (f) => {
-      console.log(`Loading extension [${f}]`);
+      logger.logInfo(`Loading extension [${f}]`);
       const mod = await import(`../extensions/${f}`);
       return mod.default() as Promise<Record<string, Tool>>;
     }),
@@ -19,7 +24,7 @@ export async function loadExtensions() {
 
   const failed = tools.filter((t) => t.status === "rejected");
   if (failed.length > 0) {
-    console.error(
+    logger.logError(
       "Error loading extensions:",
       failed.map((t) => t.reason),
     );

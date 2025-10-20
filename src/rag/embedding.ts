@@ -4,6 +4,7 @@ import { pg } from "./db";
 import z from "zod";
 import type { RagEmbedding } from "./type";
 import { getProvidersFromConfig } from "../model-routing";
+import { Logger } from "../logger";
 
 export async function findRelevantContent(
   userId: string,
@@ -19,6 +20,7 @@ export async function findRelevantContent(
   },
 ) {
   const config = await getConfig();
+  const logger = new Logger({ module: "rag", logLevel: config.log_level });
   if (!config.rag?.embedding_model) {
     throw new Error("[RAG] embedding_model not supplied");
   }
@@ -26,7 +28,7 @@ export async function findRelevantContent(
   const { openai } = await getProvidersFromConfig();
   if (!openai) throw new Error("[RAG] OpenAI provider not configured");
 
-  if (config.debug_message) console.log({ simThreshold, limit, type });
+  if (config.debug_message) logger.logDebug({ simThreshold, limit, type });
 
   const { embeddings } = await openai
     .embedding(config.rag.embedding_model)
@@ -76,7 +78,7 @@ export async function findRelevantContent(
     `;
   }
 
-  console.log(
+  logger.logInfo(
     `[RAG] search returned ${results.length} results for user: ${userId}, with search: "${search}"`,
   );
   return results;
@@ -92,14 +94,17 @@ export async function insertEmbeddings(
   }[],
 ) {
   const config = await getConfig();
+  const logger = new Logger({ module: "rag", logLevel: config.log_level });
   if (!config.rag?.embedding_model) {
     throw new Error("[RAG] embedding_model not supplied");
   }
   const { openai } = await getProvidersFromConfig();
   if (!openai) throw new Error("[RAG] OpenAI provider not configured");
 
-  console.log(`[RAG] adding ${entries.length} information for user: ${userId}`);
-  if (config.debug_message) console.log(entries);
+  logger.logInfo(
+    `[RAG] adding ${entries.length} information for user: ${userId}`,
+  );
+  if (config.debug_message) logger.logDebug(entries);
 
   const { embeddings } = await openai
     .embedding(config.rag.embedding_model)

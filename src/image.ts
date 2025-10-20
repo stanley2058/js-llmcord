@@ -1,8 +1,10 @@
 import { getConfig } from "./config-parser";
 import db from "./db";
+import { Logger } from "./logger";
 
 export async function getImageUrl(originalUrl: string, contentType: string) {
   const config = await getConfig();
+  const logger = new Logger({ module: "image" });
 
   // Fetch image data to compute content hash
   const bytes = await fetchAttachmentBytes(originalUrl);
@@ -13,7 +15,7 @@ export async function getImageUrl(originalUrl: string, contentType: string) {
   const b64 = bufferToBase64(bytes);
   const isSmall = bytes.length <= MAX_B64_SIZE && b64.length <= MAX_B64_LENGTH;
   if (!config.utApi || isSmall) {
-    console.log(
+    logger.logInfo(
       `Using base64 for image, size: ${bytes.length}, b64len: ${b64.length}`,
     );
     return `data:${contentType};base64,${b64}`;
@@ -29,10 +31,13 @@ export async function getImageUrl(originalUrl: string, contentType: string) {
 
     // Upload to UploadThing
     const response = await config.utApi.uploadFiles(file);
-    console.log("Uploading image to UploadThing, url:", response.data?.ufsUrl);
+    logger.logInfo(
+      "Uploading image to UploadThing, url:",
+      response.data?.ufsUrl,
+    );
 
     if (response.error) {
-      console.error("UploadThing upload failed:", response.error);
+      logger.logError("UploadThing upload failed:", response.error);
       // Fall back to base64 even if large
       const b64 = bufferToBase64(bytes);
       return `data:${contentType};base64,${b64}`;
@@ -48,7 +53,7 @@ export async function getImageUrl(originalUrl: string, contentType: string) {
 
     return { key: response.data.key, url: uploadedUrl };
   } catch (error) {
-    console.error("Error uploading image:", error);
+    logger.logError("Error uploading image:", error);
     // Fall back to base64
     const b64 = bufferToBase64(bytes);
     return `data:${contentType};base64,${b64}`;

@@ -22,7 +22,6 @@ import {
   TextInputStyle,
   type CacheType,
   type Interaction,
-  type RESTPostAPIApplicationCommandsJSONBody,
 } from "discord.js";
 import { getConfig } from "./config-parser";
 import {
@@ -50,6 +49,7 @@ import {
   getRecommendedMemoryStringForUsers,
   getUsersFromModelMessages,
 } from "./rag/recommend";
+import { Logger } from "./logger";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -97,6 +97,7 @@ export class DiscordOperator {
   private lastTypingSentAt = new Map<string, number>();
   private modelMessageOperator = new ModelMessageOperator();
   private trimInterval: NodeJS.Timeout;
+  private logger = new Logger({ module: "discord" });
 
   constructor() {
     this.client = new Client({
@@ -112,9 +113,10 @@ export class DiscordOperator {
 
     this.toolManager = new ToolManager();
 
-    this.modelMessageOperator.trim().catch(console.error);
+    this.modelMessageOperator.trim().catch((e) => this.logger.logError(e));
     this.trimInterval = setInterval(
-      () => this.modelMessageOperator.trim().catch(console.error),
+      () =>
+        this.modelMessageOperator.trim().catch((e) => this.logger.logError(e)),
       1000 * 60 * 60,
     );
 
@@ -126,35 +128,51 @@ export class DiscordOperator {
 
   async init() {
     const config = await getConfig();
+    this.logger.setLogLevel(config.log_level ?? "info");
+
     this.cachedConfig = config;
     this.curProviderModel =
       Object.keys(config.models || {})[0] ?? "openai/gpt-4o";
 
     await this.client.login(config.bot_token);
     await this.toolManager.init();
+    this.logger.logDebug("Discord operator initialized");
   }
 
   private async ensureCommands() {
     this.cachedConfig = await getConfig();
     if (!this.client.application) throw new Error("Client not initialized");
-    const name = "model";
-    const data: RESTPostAPIApplicationCommandsJSONBody = {
-      name,
-      description: "View or switch the current model",
-      type: ApplicationCommandType.ChatInput,
-      options: [
-        {
-          type: ApplicationCommandOptionType.String,
-          name: "model",
-          description: "Model name",
-          required: true,
-          autocomplete: true,
-        },
-      ],
-    };
     const cmds = await this.client.application.commands.fetch();
-    const existing = cmds.find((c) => c.name === name);
-    if (!existing) await this.client.application.commands.create(data);
+    const commandNames = new Set(cmds.map((c) => c.name));
+
+    // ensure `/model` command
+    if (!commandNames.has("model")) {
+      this.logger.logDebug("Register /model command");
+      await this.client.application.commands.create({
+        name: "model",
+        description: "View or switch the current model",
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: "model",
+            description: "Model name",
+            required: true,
+            autocomplete: true,
+          },
+        ],
+      });
+    }
+
+    // ensure `/reload-tools` command
+    if (!commandNames.has("reload-tools")) {
+      this.logger.logDebug("Register /reload-tools command");
+      await this.client.application.commands.create({
+        name: "reload-tools",
+        description: "Reload tools",
+        type: ApplicationCommandType.ChatInput,
+      });
+    }
   }
 
   private async clientReady() {
@@ -170,8 +188,9 @@ export class DiscordOperator {
       ? String(this.cachedConfig.client_id)
       : "";
     if (clientId) {
-      console.log(
-        `\n\nBOT INVITE URL:\nhttps://discord.com/oauth2/authorize?client_id=${clientId}&permissions=412317191168&scope=bot\n`,
+      this.logger.logDebug("Discord client ready, bot online");
+      this.logger.logInfo(
+        `BOT INVITE URL:\nhttps://discord.com/oauth2/authorize?client_id=${clientId}&permissions=412317191168&scope=bot\n`,
       );
     }
   }
@@ -183,6 +202,8 @@ export class DiscordOperator {
       interaction.isButton() &&
       interaction.customId === "show_reasoning_modal"
     ) {
+      this.logger.logDebug("[Interaction] show_reasoning_modal");
+
       const messageId = interaction.message.id;
       const reasoning = this.modelMessageOperator.getReasoning(messageId);
       const existing = reasoning?.reasoning_summary ?? "No reasoning found.";
@@ -208,6 +229,7 @@ export class DiscordOperator {
     if (interaction.type === InteractionType.ApplicationCommandAutocomplete) {
       const focused = interaction.options.getFocused(true);
       if (interaction.commandName === "model" && focused.name === "model") {
+        this.logger.logDebug("[Interaction] model");
         try {
           if (interaction.responded) return;
           const curr = this.curProviderModel;
@@ -222,14 +244,21 @@ export class DiscordOperator {
           }
           await interaction.respond(choices.slice(0, 25));
         } catch (e) {
-          console.error(e);
+          this.logger.logError(e);
           if (interaction.responded) return;
           try {
             await interaction.respond([]);
           } catch (e) {
-            console.error(e);
+            this.logger.logError(e);
           }
         }
+      }
+
+      if (interaction.commandName === "reload-tools") {
+        if (interaction.responded) return;
+        this.logger.logDebug("[Interaction] reload-tools");
+        await this.toolManager.destroy();
+        await this.toolManager.init();
       }
       return;
     }
@@ -249,7 +278,7 @@ export class DiscordOperator {
         case userIsAdmin:
           this.curProviderModel = model;
           output = `Model switched to: \`${model}\``;
-          console.log(output);
+          this.logger.logInfo(output);
           break;
         default:
           output = "You don't have permission to change the model.";
@@ -282,15 +311,15 @@ export class DiscordOperator {
     );
     const providers = await getProvidersFromConfig();
     if (!providers[provider]) {
-      console.error(`Configuration not found for provider: ${provider}`);
+      this.logger.logError(`Configuration not found for provider: ${provider}`);
       return;
     }
     if (gatewayAdapter) {
-      console.log(
+      this.logger.logInfo(
         `Using: [${provider}] w/ [${model}] via [AI-GATEWAY (${gatewayAdapter})]`,
       );
     } else {
-      console.log(`Using: [${provider}] w/ [${model}]`);
+      this.logger.logInfo(`Using: [${provider}] w/ [${model}]`);
     }
     const isAnthropic =
       provider === "anthropic" || model.startsWith("anthropic/");
@@ -339,7 +368,7 @@ export class DiscordOperator {
         : await this.toolManager.getTools();
 
       if (isAnthropic && anthropic_cache_control) {
-        console.log(
+        this.logger.logDebug(
           "Patching system message for Anthropic API with cache enabled",
         );
         for (const msg of messages) {
@@ -366,15 +395,17 @@ export class DiscordOperator {
       };
 
       if (tools && useCompatibleTools)
-        console.log("Using tools in compatible mode");
+        this.logger.logDebug("Using tools in compatible mode");
 
       const stream =
         tools && useCompatibleTools
-          ? streamTextWithCompatibleTools(opts)
+          ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
           : streamText(opts);
 
       const { textStream, finishReason, response, reasoning } = stream;
-      if (this.cachedConfig.debug_message) console.log(inspect(messages));
+      if (this.cachedConfig.debug_message) {
+        this.logger.logDebug(inspect(messages));
+      }
 
       let contentAcc = "";
       let pushedIndex = 0;
@@ -466,7 +497,9 @@ export class DiscordOperator {
       done = true;
 
       if (this.cachedConfig.debug_message) {
-        console.log(`Stream finished with reason: ${await finishReason}`);
+        this.logger.logDebug(
+          `Stream finished with reason: ${await finishReason}`,
+        );
       }
 
       if (usePlainResponses) {
@@ -480,7 +513,7 @@ export class DiscordOperator {
 
       await pusherPromise;
       if (this.cachedConfig.debug_message) {
-        console.log(`Done writing to Discord`);
+        this.logger.logDebug(`Done writing to Discord`);
       }
 
       const resp = await response;
@@ -522,7 +555,7 @@ export class DiscordOperator {
       }
     } catch (e) {
       done = true;
-      console.error("Error while generating response", e);
+      this.logger.logError("Error while generating response", e);
     }
   };
 
@@ -585,7 +618,7 @@ export class DiscordOperator {
       }
     }
 
-    console.log(
+    this.logger.logInfo(
       `Message received (user ID: ${msg.author.id}, attachments: ${msg.attachments.size}, conversation length: ${messages.length}):\n${msg.content}`,
     );
 
@@ -707,7 +740,7 @@ export class DiscordOperator {
             }
           }
         } catch (e) {
-          console.error(e);
+          this.logger.logError(e);
         }
       }
       if (images.length > maxImages) {
@@ -767,7 +800,7 @@ export class DiscordOperator {
           }
         }
       } catch (e) {
-        console.error(e);
+        this.logger.logError(e);
         parent = null;
       }
 
@@ -821,7 +854,7 @@ export class DiscordOperator {
         };
       }
     } catch (e) {
-      console.error(e);
+      this.logger.logError(e);
     }
     return { parent: null };
   }

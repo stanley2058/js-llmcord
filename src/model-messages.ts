@@ -3,6 +3,7 @@ import type { DbMessageReasoning, DbModelMessage } from "./type";
 import JSON from "superjson";
 import { getConfig } from "./config-parser";
 import type { ModelMessage } from "ai";
+import { Logger } from "./logger";
 
 export class ModelMessageOperator {
   getAll(messageId: string) {
@@ -94,11 +95,12 @@ export class ModelMessageOperator {
     );
 
     const config = await getConfig();
+    const logger = new Logger({ module: "mmo", logLevel: config.log_level });
     if (config.utApi) {
       try {
         await config.utApi.deleteFiles(actualImageIds);
       } catch (e) {
-        console.error("Error deleting from UploadThing:", e);
+        logger.logError("Error deleting from UploadThing:", e);
         return;
       }
     }
@@ -139,6 +141,7 @@ export class ModelMessageOperator {
 
   async trim() {
     const config = await getConfig();
+    const logger = new Logger({ module: "mmo", logLevel: config.log_level });
     const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
     const images = db
@@ -149,7 +152,7 @@ export class ModelMessageOperator {
       try {
         await config.utApi.deleteFiles(images.map((i) => i.uploadthing_id));
       } catch (e) {
-        console.error("Error deleting from UploadThing:", e);
+        logger.logError("Error deleting from UploadThing:", e);
         return;
       }
     }

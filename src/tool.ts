@@ -6,6 +6,7 @@ import { getConfig } from "./config-parser";
 import { getRagTools } from "./rag/embedding";
 import { pg } from "./rag/db";
 import { loadExtensions } from "./extensions";
+import { Logger } from "./logger";
 
 export type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
 
@@ -14,9 +15,11 @@ export class ToolManager {
   private mcpTools?: Record<string, Tool>;
   private ragTools?: Record<string, Tool>;
   private extensions?: Record<string, Tool>;
+  private logger = new Logger({ module: "tool" });
 
   async init() {
-    const { tools = {}, rag } = await getConfig();
+    const { tools = {}, rag, log_level } = await getConfig();
+    this.logger.setLogLevel(log_level ?? "info");
 
     for (const [name, config] of Object.entries(tools.local_mcp || {})) {
       const client = await createMCPClient({
@@ -53,7 +56,9 @@ export class ToolManager {
           break;
         }
         default: {
-          console.error(`Unknown remote MCP client type: ${config.type}`);
+          this.logger.logError(
+            `Unknown remote MCP client type: ${config.type}`,
+          );
         }
       }
     }
@@ -62,10 +67,10 @@ export class ToolManager {
     }
 
     if (rag?.enable) {
-      console.log("[RAG] register RAG tools");
+      this.logger.logInfo("[RAG] register RAG tools");
       this.ragTools = getRagTools();
 
-      console.log("[RAG] ensure table");
+      this.logger.logInfo("[RAG] ensure table");
       await pg();
     }
 
@@ -73,8 +78,10 @@ export class ToolManager {
       const extensions = await loadExtensions();
       if (extensions) this.extensions = extensions;
     } catch (e) {
-      console.error("Error loading extensions:", e);
+      this.logger.logError("Error loading extensions:", e);
     }
+
+    this.logger.logInfo("ToolManager initialized");
   }
 
   async getMcpTools() {
@@ -89,7 +96,7 @@ export class ToolManager {
       .filter((r) => r.status === "rejected")
       .map((r) => r.reason);
     if (errors.length > 0) {
-      console.error("Error fetching tools:", errors);
+      this.logger.logError("Error fetching tools:", errors);
     }
 
     return success.reduce(
@@ -113,7 +120,7 @@ export class ToolManager {
     );
     const failed = res.filter((r) => r.status === "rejected");
     if (failed.length === 0) return;
-    console.error(
+    this.logger.logError(
       "Error closing MCP clients:",
       failed.map((r) => r.reason),
     );

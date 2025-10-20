@@ -7,6 +7,7 @@ import {
   type ReasoningOutput,
   type ToolResultPart,
 } from "ai";
+import type { ILogger } from "./logger";
 
 export type StreamTextParams = Parameters<typeof streamText>[0];
 export type StreamTextResult = Awaited<ReturnType<typeof streamText>>;
@@ -32,8 +33,9 @@ const toolCallIdPrefix = "compatible-tool";
 export function streamTextWithCompatibleTools({
   tools,
   messages,
+  logger,
   ...rest
-}: StreamTextParams) {
+}: StreamTextParams & { logger: ILogger }) {
   messages = [...(messages || [])];
 
   const toolDesc = Object.entries((tools = tools || {})).map(([name, tool]) => {
@@ -143,7 +145,7 @@ export function streamTextWithCompatibleTools({
         break;
       }
 
-      console.log(`Calling tool in compatible mode: ${toolName}`);
+      logger.logInfo(`Calling tool in compatible mode: ${toolName}`);
 
       // call tool
       const callId = generateCallId();
