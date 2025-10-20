@@ -1,5 +1,6 @@
 # Discord settings:
 
+log_level: info # debug, info, warn, error
 bot_token: 
 client_id: "123456789"
 status_message: 

@@ -1,4 +1,5 @@
 export type Config = {
+  log_level?: "debug" | "info" | "warn" | "error";
   bot_token: string;
   client_id?: string | number | null;
   status_message?: string | null;
