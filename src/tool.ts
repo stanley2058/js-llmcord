@@ -18,9 +18,39 @@ export class ToolManager {
   private logger = new Logger({ module: "tool" });
 
   async init() {
-    const { tools = {}, rag, log_level } = await getConfig();
+    const { rag, log_level } = await getConfig();
     this.logger.setLogLevel(log_level ?? "info");
 
+    try {
+      await this.loadMcpTools();
+    } catch (e) {
+      this.logger.logError("Error loading MCP tools:", e);
+    }
+
+    if (Object.keys(this.mcps).length > 0) {
+      this.mcpTools = await this.getMcpTools();
+    }
+
+    if (rag?.enable) {
+      this.logger.logInfo("[RAG] register RAG tools");
+      this.ragTools = getRagTools();
+
+      this.logger.logInfo("[RAG] ensure table");
+      await pg();
+    }
+
+    try {
+      const extensions = await loadExtensions();
+      if (extensions) this.extensions = extensions;
+    } catch (e) {
+      this.logger.logError("Error loading extensions:", e);
+    }
+
+    this.logger.logInfo("ToolManager initialized");
+  }
+
+  async loadMcpTools() {
+    const { tools = {} } = await getConfig();
     for (const [name, config] of Object.entries(tools.local_mcp || {})) {
       const client = await createMCPClient({
         transport: new StdioClientTransport(config),
@@ -62,26 +92,6 @@ export class ToolManager {
         }
       }
     }
-    if (Object.keys(this.mcps).length > 0) {
-      this.mcpTools = await this.getMcpTools();
-    }
-
-    if (rag?.enable) {
-      this.logger.logInfo("[RAG] register RAG tools");
-      this.ragTools = getRagTools();
-
-      this.logger.logInfo("[RAG] ensure table");
-      await pg();
-    }
-
-    try {
-      const extensions = await loadExtensions();
-      if (extensions) this.extensions = extensions;
-    } catch (e) {
-      this.logger.logError("Error loading extensions:", e);
-    }
-
-    this.logger.logInfo("ToolManager initialized");
   }
 
   async getMcpTools() {
