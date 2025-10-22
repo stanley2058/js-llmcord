@@ -10,7 +10,7 @@ export async function findRelevantContent(
   userId: string,
   search: string,
   {
-    simThreshold = 0.65,
+    simThreshold = 0.3,
     limit = 10,
     type,
   }: {
@@ -231,7 +231,7 @@ export function getRagTools() {
               .min(0)
               .max(1)
               .optional()
-              .describe("(Optional) Similarity threshold. Default 0.65."),
+              .describe("(Optional) Similarity threshold. Default 0.30."),
             limit: z
               .number()
               .min(1)
@@ -250,7 +250,7 @@ export function getRagTools() {
           .optional(),
       }),
       execute: async ({ user_id, search, options }) => {
-        const { simThreshold = 0.65, limit = 10, type } = options ?? {};
+        const { simThreshold = 0.3, limit = 10, type } = options ?? {};
         const results = await findRelevantContent(user_id, search, {
           simThreshold,
           limit,
