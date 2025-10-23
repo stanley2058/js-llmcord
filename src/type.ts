@@ -71,6 +71,7 @@ export type Providers =
   | "x-ai"
   | "openrouter"
   | "anthropic"
+  | "groq"
   | "ai-gateway"
   | (string & {});
 

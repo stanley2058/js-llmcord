@@ -86,7 +86,19 @@ models:
   openrouter/anthropic/claude-sonnet-4:
     anthropic_cache_control: false
 
+  ai-gateway/anthropic/claude-sonnet-4.5:
+    anthropic_cache_control: false
+    thinking:
+      type: enabled
+      budget_tokens: 1500
+
   ollama/llama4:
+
+  groq/openai/gpt-oss-120b:
+    reasoning_format: parsed # 'parsed' | 'raw' | 'hidden'
+    reasoning_effort: low # 'low' | 'medium' | 'high' | 'default'
+    parallel_tool_calls: true
+    service_tier: on_demand # 'on_demand' | 'flex' | 'auto'
 
 tools:
   include_summary: false

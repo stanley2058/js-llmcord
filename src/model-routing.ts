@@ -3,12 +3,13 @@ import { getConfig } from "./config-parser";
 import { createXai } from "@ai-sdk/xai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGroq } from "@ai-sdk/groq";
+import { createGateway } from "ai";
 import {
   createOpenAICompatible,
   type OpenAICompatibleProvider,
 } from "@ai-sdk/openai-compatible";
 import type { Providers } from "./type";
-import { createGateway } from "ai";
 
 export async function getProvidersFromConfig() {
   const config = await getConfig();
@@ -17,6 +18,7 @@ export async function getProvidersFromConfig() {
     "x-ai",
     "anthropic",
     "openrouter",
+    "groq",
     "ai-gateway",
   ];
   const openaiCompatibleProviders = Object.keys(config.providers).filter(
@@ -50,6 +52,13 @@ export async function getProvidersFromConfig() {
           apiKey: config.providers.openrouter.api_key,
           headers: config.providers.openrouter.extra_headers,
           extraBody: config.providers.openrouter.extra_body,
+        })
+      : null,
+    groq: config.providers.groq
+      ? createGroq({
+          baseURL: config.providers.groq.base_url,
+          apiKey: config.providers.groq.api_key,
+          headers: config.providers.groq.extra_headers,
         })
       : null,
     "ai-gateway": config.providers["ai-gateway"]
