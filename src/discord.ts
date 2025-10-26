@@ -33,6 +33,7 @@ import {
   streamText,
   type DataContent,
   type ModelMessage,
+  type ReasoningOutput,
   type TextPart,
 } from "ai";
 import { getImageUrl } from "./image";
@@ -539,7 +540,19 @@ export class DiscordOperator {
         }
       }
 
-      const reasoningSummary = (await reasoning)
+      const reasoningMessages: ReasoningOutput[] = [];
+      for (const msg of resp.messages) {
+        if (msg.role !== "assistant") continue;
+        if (typeof msg.content === "string") continue;
+        const parts = msg.content.filter((p) => p.type === "reasoning");
+        if (parts.length === 0) continue;
+        reasoningMessages.push(...parts);
+      }
+      const reasoningResp = await reasoning;
+
+      const reasoningSummary = (
+        reasoningResp.length > 0 ? reasoningResp : reasoningMessages
+      )
         .map((r) => r.text)
         .join("\n\n");
       await this.modelMessageOperator.create({
