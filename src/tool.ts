@@ -52,44 +52,56 @@ export class ToolManager {
   async loadMcpTools() {
     const { tools = {} } = await getConfig();
     for (const [name, config] of Object.entries(tools.local_mcp || {})) {
-      const client = await createMCPClient({
-        transport: new StdioClientTransport(config),
-      });
+      try {
+        const client = await createMCPClient({
+          transport: new StdioClientTransport(config),
+        });
 
-      this.mcps[`local_${name}`] = client;
+        this.mcps[`local_${name}`] = client;
+      } catch (e) {
+        throw new Error(`Error loading local MCP client: [${name}]`, {
+          cause: e,
+        });
+      }
     }
 
     for (const [name, config] of Object.entries(tools.remote_mcp || {})) {
-      switch (config.type) {
-        case "http": {
-          const { type: _, url, ...opts } = config;
-          const client = await createMCPClient({
-            transport: new StreamableHTTPClientTransport(new URL(url), {
-              requestInit: opts,
-            }),
-          });
+      try {
+        switch (config.type) {
+          case "http": {
+            const { type: _, url, ...opts } = config;
+            const client = await createMCPClient({
+              transport: new StreamableHTTPClientTransport(new URL(url), {
+                requestInit: opts,
+              }),
+            });
 
-          this.mcps[`remote_${name}`] = client;
-          break;
-        }
-        case "sse": {
-          const { type: _, url, ...opts } = config;
-          const client = await createMCPClient({
-            transport: {
-              type: "sse",
-              url,
-              ...opts,
-            },
-          });
+            this.mcps[`remote_${name}`] = client;
+            break;
+          }
+          case "sse": {
+            const { type: _, url, ...opts } = config;
+            const client = await createMCPClient({
+              transport: {
+                type: "sse",
+                url,
+                ...opts,
+              },
+            });
 
-          this.mcps[`remote_${name}`] = client;
-          break;
+            this.mcps[`remote_${name}`] = client;
+            break;
+          }
+          default: {
+            this.logger.logError(
+              `Unknown remote MCP client type: ${config.type}`,
+            );
+          }
         }
-        default: {
-          this.logger.logError(
-            `Unknown remote MCP client type: ${config.type}`,
-          );
-        }
+      } catch (e) {
+        throw new Error(`Error loading remote MCP client: [${name}]`, {
+          cause: e,
+        });
       }
     }
   }
