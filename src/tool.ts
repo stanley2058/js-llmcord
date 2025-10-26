@@ -146,5 +146,6 @@ export class ToolManager {
       "Error closing MCP clients:",
       failed.map((r) => r.reason),
     );
+    this.mcps = {};
   }
 }
