@@ -17,6 +17,8 @@ export class ToolManager {
   private extensions?: Record<string, Tool>;
   private logger = new Logger({ module: "tool" });
 
+  disabledTools: Set<string> = new Set();
+
   async init() {
     const { rag, log_level } = await getConfig();
     this.logger.setLogLevel(log_level ?? "info");
@@ -127,13 +129,25 @@ export class ToolManager {
     );
   }
 
-  async getTools() {
+  async getAllTools() {
     let tools: Record<string, Tool> = {};
     if (this.mcpTools) tools = { ...tools, ...this.mcpTools };
     if (this.extensions) tools = { ...tools, ...this.extensions };
     if (this.ragTools) tools = { ...tools, ...this.ragTools };
     if (Object.keys(tools).length === 0) return undefined;
     return tools;
+  }
+
+  async getTools() {
+    const tools = await this.getAllTools();
+    if (!tools) return undefined;
+
+    const filtered: Record<string, Tool> = {};
+    for (const [name, tool] of Object.entries(tools)) {
+      if (this.disabledTools.has(name)) continue;
+      filtered[name] = tool;
+    }
+    return filtered;
   }
 
   async destroy() {
@@ -147,5 +161,6 @@ export class ToolManager {
       failed.map((r) => r.reason),
     );
     this.mcps = {};
+    this.disabledTools.clear();
   }
 }

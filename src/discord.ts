@@ -174,6 +174,43 @@ export class DiscordOperator {
         type: ApplicationCommandType.ChatInput,
       });
     }
+
+    // ensure `/tools` command
+    if (!commandNames.has("tools")) {
+      this.logger.logDebug("Register /tools command");
+      await this.client.application.commands.create({
+        name: "tools",
+        description:
+          "Toggle tools for the models (use `/list-tools` to see available tools)",
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: "tools",
+            description: "Tools to toggle on/off (comma-separated)",
+            required: true,
+          },
+        ],
+      });
+    }
+
+    // ensure `/list-tools` command
+    if (!commandNames.has("list-tools")) {
+      this.logger.logDebug("Register /list-tools command");
+      await this.client.application.commands.create({
+        name: "list-tools",
+        description: "List all available tools",
+        type: ApplicationCommandType.ChatInput,
+        options: [
+          {
+            type: ApplicationCommandOptionType.String,
+            name: "tool",
+            description: "Tool to get details for",
+            required: false,
+          },
+        ],
+      });
+    }
   }
 
   private async clientReady() {
@@ -283,6 +320,57 @@ export class DiscordOperator {
         content: output,
         flags: isDM ? MessageFlags.Ephemeral : undefined,
       });
+    }
+    if (interaction.commandName === "tools") {
+      const toolsRaw = interaction.options.getString("tools", true);
+      const adminIds = decodeIds(this.cachedConfig.permissions.users.admin_ids);
+      const userIsAdmin = adminIds.has(interaction.user.id);
+
+      let output = "";
+      if (!userIsAdmin) {
+        output = "You don't have permission to change the model.";
+      } else {
+        const tools = toolsRaw.split(",").map((t) => t.trim());
+        const outputs: string[] = [];
+        for (const tool of tools) {
+          if (this.toolManager.disabledTools.has(tool)) {
+            this.toolManager.disabledTools.delete(tool);
+            outputs.push(`- ◉ \`${tool}\``);
+          } else {
+            this.toolManager.disabledTools.add(tool);
+            outputs.push(`- ○ \`${tool}\``);
+          }
+        }
+        output = "**Updated tools:**\n" + outputs.join("\n");
+        this.logger.logInfo(output);
+      }
+
+      await interaction.reply({
+        content: output,
+        flags: isDM ? MessageFlags.Ephemeral : undefined,
+      });
+    }
+    if (interaction.commandName === "list-tools") {
+      const toolDetail = interaction.options.getString("tool", false);
+      await interaction.deferReply({
+        flags: isDM ? MessageFlags.Ephemeral : undefined,
+      });
+
+      const allTools = await this.toolManager.getAllTools();
+      const tools = Object.keys(allTools || {});
+      const list: string[] = [];
+      for (const tool of tools) {
+        const { description } = allTools?.[tool] || {};
+        let output = "";
+        if (this.toolManager.disabledTools.has(tool)) {
+          output = `- ○ \`${tool}\``;
+        } else {
+          output = `- ◉ \`${tool}\``;
+        }
+        if (toolDetail && toolDetail === tool) output += `\n  - ${description}`;
+        list.push(output);
+      }
+      await interaction.editReply({ content: list.join("\n").slice(0, 2000) });
     }
     if (interaction.commandName === "reload-tools") {
       await interaction.deferReply({
