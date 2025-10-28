@@ -7,6 +7,7 @@ import { getRagTools } from "./rag/embedding";
 import { pg } from "./rag/db";
 import { loadExtensions } from "./extensions";
 import { Logger } from "./logger";
+import type { LocalMCPConfig, RemoteMCPConfig } from "./type";
 
 export type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
 
@@ -51,61 +52,73 @@ export class ToolManager {
     this.logger.logInfo("ToolManager initialized");
   }
 
+  private async loadLocalMcp(name: string, config: LocalMCPConfig) {
+    try {
+      const client = await createMCPClient({
+        transport: new StdioClientTransport(config),
+      });
+
+      this.mcps[`local_${name}`] = client;
+    } catch (e) {
+      throw new Error(`Error loading local MCP client: [${name}]`, {
+        cause: e,
+      });
+    }
+  }
+
+  private async loadRemoteMcp(name: string, config: RemoteMCPConfig) {
+    try {
+      switch (config.type) {
+        case "http": {
+          const { type: _, url, ...opts } = config;
+          const client = await createMCPClient({
+            transport: new StreamableHTTPClientTransport(new URL(url), {
+              requestInit: opts,
+            }),
+          });
+
+          this.mcps[`remote_${name}`] = client;
+          break;
+        }
+        case "sse": {
+          const { type: _, url, ...opts } = config;
+          const client = await createMCPClient({
+            transport: {
+              type: "sse",
+              url,
+              ...opts,
+            },
+          });
+
+          this.mcps[`remote_${name}`] = client;
+          break;
+        }
+        default: {
+          this.logger.logError(
+            `Unknown remote MCP client type: ${config.type}`,
+          );
+        }
+      }
+    } catch (e) {
+      throw new Error(`Error loading remote MCP client: [${name}]`, {
+        cause: e,
+      });
+    }
+  }
+
   async loadMcpTools() {
     const { tools = {} } = await getConfig();
-    for (const [name, config] of Object.entries(tools.local_mcp || {})) {
-      try {
-        const client = await createMCPClient({
-          transport: new StdioClientTransport(config),
-        });
+    const loadPromises: Promise<void>[] = [];
 
-        this.mcps[`local_${name}`] = client;
-      } catch (e) {
-        throw new Error(`Error loading local MCP client: [${name}]`, {
-          cause: e,
-        });
-      }
+    for (const [name, config] of Object.entries(tools.local_mcp || {})) {
+      loadPromises.push(this.loadLocalMcp(name, config));
     }
 
     for (const [name, config] of Object.entries(tools.remote_mcp || {})) {
-      try {
-        switch (config.type) {
-          case "http": {
-            const { type: _, url, ...opts } = config;
-            const client = await createMCPClient({
-              transport: new StreamableHTTPClientTransport(new URL(url), {
-                requestInit: opts,
-              }),
-            });
-
-            this.mcps[`remote_${name}`] = client;
-            break;
-          }
-          case "sse": {
-            const { type: _, url, ...opts } = config;
-            const client = await createMCPClient({
-              transport: {
-                type: "sse",
-                url,
-                ...opts,
-              },
-            });
-
-            this.mcps[`remote_${name}`] = client;
-            break;
-          }
-          default: {
-            this.logger.logError(
-              `Unknown remote MCP client type: ${config.type}`,
-            );
-          }
-        }
-      } catch (e) {
-        throw new Error(`Error loading remote MCP client: [${name}]`, {
-          cause: e,
-        });
-      }
+      loadPromises.push(this.loadRemoteMcp(name, config));
     }
+
+    await Promise.allSettled(loadPromises);
   }
 
   async getMcpTools() {
