@@ -20,6 +20,7 @@ import {
   Partials,
   TextInputBuilder,
   TextInputStyle,
+  type ApplicationCommandData,
   type CacheType,
   type Interaction,
 } from "discord.js";
@@ -140,76 +141,69 @@ export class DiscordOperator {
     this.logger.logDebug("Discord operator initialized");
   }
 
+  private commands: Record<string, ApplicationCommandData> = {
+    model: {
+      name: "model",
+      description: "View or switch the current model",
+      type: ApplicationCommandType.ChatInput,
+      options: [
+        {
+          type: ApplicationCommandOptionType.String,
+          name: "model",
+          description: "Model name",
+          required: true,
+          autocomplete: true,
+        },
+      ],
+    },
+    "reload-tools": {
+      name: "reload-tools",
+      description: "Reload tools",
+      type: ApplicationCommandType.ChatInput,
+    },
+    tools: {
+      name: "tools",
+      description:
+        "Toggle tools for the models (use `/list-tools` to see available tools)",
+      type: ApplicationCommandType.ChatInput,
+      options: [
+        {
+          type: ApplicationCommandOptionType.String,
+          name: "tools",
+          description: "Tools to toggle on/off (comma-separated)",
+          required: true,
+        },
+      ],
+    },
+    "list-tools": {
+      name: "list-tools",
+      description: "List all available tools",
+      type: ApplicationCommandType.ChatInput,
+      options: [
+        {
+          type: ApplicationCommandOptionType.String,
+          name: "tool",
+          description: "Tool to get details for",
+          required: false,
+        },
+      ],
+    },
+  };
+
   private async ensureCommands() {
     this.cachedConfig = await getConfig();
     if (!this.client.application) throw new Error("Client not initialized");
     const cmds = await this.client.application.commands.fetch();
-    const commandNames = new Set(cmds.map((c) => c.name));
+    const commands = new Map(cmds.map((c) => [c.name, c]));
 
-    // ensure `/model` command
-    if (!commandNames.has("model")) {
-      this.logger.logDebug("Register /model command");
-      await this.client.application.commands.create({
-        name: "model",
-        description: "View or switch the current model",
-        type: ApplicationCommandType.ChatInput,
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: "model",
-            description: "Model name",
-            required: true,
-            autocomplete: true,
-          },
-        ],
-      });
-    }
-
-    // ensure `/reload-tools` command
-    if (!commandNames.has("reload-tools")) {
-      this.logger.logDebug("Register /reload-tools command");
-      await this.client.application.commands.create({
-        name: "reload-tools",
-        description: "Reload tools",
-        type: ApplicationCommandType.ChatInput,
-      });
-    }
-
-    // ensure `/tools` command
-    if (!commandNames.has("tools")) {
-      this.logger.logDebug("Register /tools command");
-      await this.client.application.commands.create({
-        name: "tools",
-        description:
-          "Toggle tools for the models (use `/list-tools` to see available tools)",
-        type: ApplicationCommandType.ChatInput,
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: "tools",
-            description: "Tools to toggle on/off (comma-separated)",
-            required: true,
-          },
-        ],
-      });
-    }
-
-    // ensure `/list-tools` command
-    if (!commandNames.has("list-tools")) {
-      this.logger.logDebug("Register /list-tools command");
-      await this.client.application.commands.create({
-        name: "list-tools",
-        description: "List all available tools",
-        type: ApplicationCommandType.ChatInput,
-        options: [
-          {
-            type: ApplicationCommandOptionType.String,
-            name: "tool",
-            description: "Tool to get details for",
-            required: false,
-          },
-        ],
-      });
+    for (const [name, cmd] of Object.entries(this.commands)) {
+      this.logger.logDebug(`Register ${name} command`);
+      const existing = commands.get(name);
+      if (existing) {
+        await existing.edit(cmd);
+      } else {
+        await this.client.application.commands.create(cmd);
+      }
     }
   }
 
