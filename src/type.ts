@@ -88,3 +88,10 @@ export type DbMessageReasoning = {
   reasoning_summary: string;
   created_at: number;
 };
+
+export type DbImageCache = {
+  uploadthing_id: string;
+  uploadthing_url: string;
+  original_url: string;
+  created_at: number;
+};

@@ -1,10 +1,18 @@
 import { getConfig } from "./config-parser";
 import db from "./db";
 import { Logger } from "./logger";
+import type { DbImageCache } from "./type";
 
 export async function getImageUrl(originalUrl: string, contentType: string) {
   const config = await getConfig();
   const logger = new Logger({ module: "image" });
+
+  const existing = db
+    .query(`SELECT * FROM image_cache WHERE original_url = ?`)
+    .get(originalUrl) as DbImageCache | null;
+  if (existing) {
+    return { key: existing.uploadthing_id, url: existing.uploadthing_url };
+  }
 
   // Fetch image data to compute content hash
   const bytes = await fetchAttachmentBytes(originalUrl);
