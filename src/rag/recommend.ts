@@ -4,9 +4,9 @@ import type { RagEmbedding } from "./type";
 
 type EmbeddingType = "intent" | "fact" | "preference";
 const DEFAULT_CAPS: Record<EmbeddingType, number> = {
-  intent: 4,
-  preference: 6,
-  fact: 4,
+  intent: 8,
+  preference: 8,
+  fact: 16,
 };
 
 const DEFAULT_THRESHOLDS: Record<EmbeddingType, number> = {
