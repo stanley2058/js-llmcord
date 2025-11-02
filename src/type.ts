@@ -40,6 +40,12 @@ export type Config = {
     embedding_model?: "text-embedding-3-small" | "text-embedding-ada-002";
   };
   system_prompt?: string | null;
+  additional_headers?: {
+    user_id?: {
+      enabled: boolean;
+      header_name: string;
+    }
+  }
 };
 
 export type ProviderConfig = {

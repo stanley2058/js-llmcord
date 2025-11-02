@@ -486,6 +486,18 @@ export class DiscordOperator {
         },
       };
 
+      if (this.cachedConfig.additional_headers) {
+        if (this.cachedConfig.additional_headers?.user_id?.enabled) {
+          const userIds = getUsersFromModelMessages(messages);
+          opts.headers = {
+            ...opts.headers,
+            [this.cachedConfig.additional_headers?.user_id?.header_name]: [
+              ...userIds,
+            ].join(","),
+          };
+        }
+      }
+
       if (tools && useCompatibleTools)
         this.logger.logDebug("Using tools in compatible mode");
 
