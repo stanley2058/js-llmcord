@@ -18,7 +18,6 @@ export class Logger implements ILogger {
     module = "",
   }: {
     logLevel?: LogLevel;
-    logFileName?: string;
     module?: string;
   } = {}) {
     this.logLevel = logLevel;
