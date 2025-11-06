@@ -100,6 +100,7 @@ export class DiscordOperator {
   private modelMessageOperator = new ModelMessageOperator();
   private trimInterval: NodeJS.Timeout;
   private logger = new Logger({ module: "discord" });
+  private statusInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.client = new Client({
@@ -123,6 +124,9 @@ export class DiscordOperator {
     );
 
     this.client.once("clientReady", () => this.clientReady());
+    this.client.on("shardReady", this.setStatus);
+    this.client.on("shardResume", this.setStatus);
+    this.client.on("shardReconnecting", this.setStatus);
     this.client.on("interactionCreate", this.interactionCreate);
     this.client.on("messageCreate", this.messageCreate);
     this.client.on("messageDelete", this.messageDelete);
@@ -138,6 +142,11 @@ export class DiscordOperator {
 
     await this.client.login(config.bot_token);
     await this.toolManager.init();
+
+    this.statusInterval = setInterval(
+      () => this.setStatus().catch(this.logger.logError),
+      1000 * 60 * 10,
+    );
     this.logger.logDebug("Discord operator initialized");
   }
 
@@ -210,12 +219,7 @@ export class DiscordOperator {
   private async clientReady() {
     this.cachedConfig = await getConfig();
     await this.ensureCommands();
-    const status = (this.cachedConfig.status_message || "").slice(0, 128);
-
-    this.client.user?.setPresence({
-      activities: [{ type: ActivityType.Custom, state: status, name: status }],
-      status: "online",
-    });
+    await this.setStatus();
     const clientId = this.cachedConfig.client_id
       ? String(this.cachedConfig.client_id)
       : "";
@@ -226,6 +230,15 @@ export class DiscordOperator {
       );
     }
   }
+
+  private setStatus = async () => {
+    const status = (this.cachedConfig.status_message || "").slice(0, 128);
+
+    this.client.user?.setPresence({
+      activities: [{ type: ActivityType.Custom, state: status, name: status }],
+      status: "online",
+    });
+  };
 
   private interactionCreate = async (interaction: Interaction<CacheType>) => {
     this.cachedConfig = await getConfig();
@@ -1067,9 +1080,15 @@ export class DiscordOperator {
 
   async destroy() {
     clearInterval(this.trimInterval);
+    if (this.statusInterval) clearInterval(this.statusInterval);
+
     this.client.off("messageDelete", this.messageDelete);
     this.client.off("messageCreate", this.messageCreate);
     this.client.off("interactionCreate", this.interactionCreate);
+    this.client.off("shardReady", this.setStatus);
+    this.client.off("shardResume", this.setStatus);
+    this.client.off("shardReconnecting", this.setStatus);
+
     await this.client.destroy();
   }
 }
