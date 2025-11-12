@@ -514,173 +514,192 @@ export class DiscordOperator {
       if (tools && useCompatibleTools)
         this.logger.logDebug("Using tools in compatible mode");
 
-      const stream =
-        tools && useCompatibleTools
-          ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
-          : streamText(opts);
-
-      const { textStream, finishReason, response, reasoning } = stream;
-      if (this.cachedConfig.debug_message) {
-        this.logger.logDebug(inspect(messages));
-      }
-
-      let contentAcc = "";
-      let pushedIndex = 0;
       let lastMsg = msg;
-      const discordMessageCreated: string[] = [];
-      let flushed = false;
-      const responseQueue: string[] = [];
-      const { promise: pusherPromise, resolve: pusherResolve } =
-        Promise.withResolvers();
-      let pushing = false;
-      const getMaxForCurrent = (isStreaming: boolean) =>
-        usePlainResponses
-          ? 4000
-          : isStreaming
-            ? 4096 - STREAMING_INDICATOR.length
-            : 4096;
-      const pusher = setInterval(async () => {
-        if (pushing) return; // prevent re-entrancy
-        pushing = true;
-        try {
-          const upToDate = pushedIndex === contentAcc.length;
-          if (flushed && done && upToDate) {
-            pusherResolve();
-            clearInterval(pusher);
-            return;
-          }
-          if (upToDate && !(done && !flushed)) return;
+      const generateStream = async () => {
+        const stream =
+          tools && useCompatibleTools
+            ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
+            : streamText(opts);
 
-          // Consume all new data since last tick
-          const delta = contentAcc.slice(pushedIndex);
-          pushedIndex = contentAcc.length;
+        const { textStream, finishReason, response, reasoning } = stream;
+        if (this.cachedConfig.debug_message) {
+          this.logger.logDebug(inspect(messages));
+        }
 
-          // Ensure at least one bucket
-          if (responseQueue.length === 0) responseQueue.push("");
+        let contentAcc = "";
+        let pushedIndex = 0;
+        const discordMessageCreated: string[] = [];
+        let flushed = false;
+        const responseQueue: string[] = [];
+        const { promise: pusherPromise, resolve: pusherResolve } =
+          Promise.withResolvers();
+        let pushing = false;
+        const getMaxForCurrent = (isStreaming: boolean) =>
+          usePlainResponses
+            ? 4000
+            : isStreaming
+              ? 4096 - STREAMING_INDICATOR.length
+              : 4096;
+        const pusher = setInterval(async () => {
+          if (pushing) return; // prevent re-entrancy
+          pushing = true;
+          try {
+            const upToDate = pushedIndex === contentAcc.length;
+            if (flushed && done && upToDate) {
+              pusherResolve();
+              clearInterval(pusher);
+              return;
+            }
+            if (upToDate && !(done && !flushed)) return;
 
-          let i = 0;
-          while (i < delta.length) {
-            const isStreamingEmbed = !done && i < delta.length; // last (active) bucket
-            const maxLen = getMaxForCurrent(isStreamingEmbed);
+            // Consume all new data since last tick
+            const delta = contentAcc.slice(pushedIndex);
+            pushedIndex = contentAcc.length;
 
-            const lastIdx = responseQueue.length - 1;
-            const lastLen = responseQueue[lastIdx]!.length;
-            const room = Math.max(0, maxLen - lastLen);
+            // Ensure at least one bucket
+            if (responseQueue.length === 0) responseQueue.push("");
 
-            if (room === 0) {
-              // Start a new bucket
-              responseQueue.push("");
-              continue;
+            let i = 0;
+            while (i < delta.length) {
+              const isStreamingEmbed = !done && i < delta.length; // last (active) bucket
+              const maxLen = getMaxForCurrent(isStreamingEmbed);
+
+              const lastIdx = responseQueue.length - 1;
+              const lastLen = responseQueue[lastIdx]!.length;
+              const room = Math.max(0, maxLen - lastLen);
+
+              if (room === 0) {
+                // Start a new bucket
+                responseQueue.push("");
+                continue;
+              }
+
+              const take = Math.min(room, delta.length - i);
+              responseQueue[lastIdx] += delta.slice(i, i + take);
+              i += take;
             }
 
-            const take = Math.min(room, delta.length - i);
-            responseQueue[lastIdx] += delta.slice(i, i + take);
-            i += take;
+            const emb = warnEmbed
+              ? new EmbedBuilder(warnEmbed.toJSON())
+              : new EmbedBuilder();
+
+            const accuContent = responseQueue[responseQueue.length - 1]!;
+            const desc = done ? accuContent : accuContent + STREAMING_INDICATOR;
+            emb.setDescription(desc);
+            emb.setColor(done ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE);
+            flushed = done;
+
+            if (!flushed) await this.sendTyping(msg);
+            else this.lastTypingSentAt.delete(msg.channel.id);
+
+            // New Discord message only when a new bucket appeared (or first send)
+            if (
+              discordMessageCreated.length < responseQueue.length ||
+              msg === lastMsg
+            ) {
+              lastMsg = await lastMsg.reply({
+                embeds: [emb],
+                allowedMentions: { parse: [], repliedUser: false },
+              });
+              discordMessageCreated.push(lastMsg.id);
+            } else {
+              await lastMsg.edit({ embeds: [emb] });
+            }
+          } finally {
+            pushing = false;
           }
+        }, EDIT_DELAY_SECONDS * 1000);
 
-          const emb = warnEmbed
-            ? new EmbedBuilder(warnEmbed.toJSON())
-            : new EmbedBuilder();
+        for await (const textPart of textStream) contentAcc += textPart;
+        await finishReason;
+        done = true;
 
-          const accuContent = responseQueue[responseQueue.length - 1]!;
-          const desc = done ? accuContent : accuContent + STREAMING_INDICATOR;
-          emb.setDescription(desc);
-          emb.setColor(done ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE);
-          flushed = done;
+        if (this.cachedConfig.debug_message) {
+          this.logger.logDebug(
+            `Stream finished with reason: ${await finishReason}`,
+          );
+        }
 
-          if (!flushed) await this.sendTyping(msg);
-          else this.lastTypingSentAt.delete(msg.channel.id);
-
-          // New Discord message only when a new bucket appeared (or first send)
-          if (
-            discordMessageCreated.length < responseQueue.length ||
-            msg === lastMsg
-          ) {
+        if (usePlainResponses) {
+          for (const content of responseQueue) {
             lastMsg = await lastMsg.reply({
-              embeds: [emb],
+              content,
               allowedMentions: { parse: [], repliedUser: false },
             });
-            discordMessageCreated.push(lastMsg.id);
-          } else {
-            await lastMsg.edit({ embeds: [emb] });
-          }
-        } finally {
-          pushing = false;
-        }
-      }, EDIT_DELAY_SECONDS * 1000);
-
-      for await (const textPart of textStream) contentAcc += textPart;
-      await finishReason;
-      done = true;
-
-      if (this.cachedConfig.debug_message) {
-        this.logger.logDebug(
-          `Stream finished with reason: ${await finishReason}`,
-        );
-      }
-
-      if (usePlainResponses) {
-        for (const content of responseQueue) {
-          lastMsg = await lastMsg.reply({
-            content,
-            allowedMentions: { parse: [], repliedUser: false },
-          });
-        }
-      }
-
-      await pusherPromise;
-      if (this.cachedConfig.debug_message) {
-        this.logger.logDebug(`Done writing to Discord`);
-      }
-
-      const resp = await response;
-      const stripped = stripToolTraffic(resp.messages);
-
-      if (this.cachedConfig.tools?.include_summary) {
-        const toolSummary = buildToolAuditNote(resp.messages);
-        if (stripped[0]?.role === "assistant" && toolSummary) {
-          if (typeof stripped[0].content === "string") {
-            stripped[0].content += `\n\n${toolSummary}`;
-          } else {
-            stripped[0].content.push({ type: "text", text: toolSummary });
           }
         }
-      }
 
-      const reasoningMessages: ReasoningOutput[] = [];
-      for (const msg of resp.messages) {
-        if (msg.role !== "assistant") continue;
-        if (typeof msg.content === "string") continue;
-        const parts = msg.content.filter((p) => p.type === "reasoning");
-        if (parts.length === 0) continue;
-        reasoningMessages.push(...parts);
-      }
-      const reasoningResp = await reasoning;
+        await pusherPromise;
+        if (this.cachedConfig.debug_message) {
+          this.logger.logDebug(`Done writing to Discord`);
+        }
 
-      const reasoningSummary = (
-        reasoningResp.length > 0 ? reasoningResp : reasoningMessages
-      )
-        .map((r) => r.text)
-        .join("\n\n");
-      await this.modelMessageOperator.create({
-        messageId: discordMessageCreated,
-        parentMessageId: msg.id,
-        messages: stripped,
-        imageIds:
-          currentMessageImageIds.length > 0
-            ? currentMessageImageIds
-            : undefined,
-        reasoningSummary,
-      });
+        const resp = await response;
+        const stripped = stripToolTraffic(resp.messages);
 
-      if (reasoningSummary) {
-        const button = new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder()
-            .setCustomId("show_reasoning_modal")
-            .setLabel("Show reasoning")
-            .setStyle(ButtonStyle.Secondary),
-        );
-        lastMsg.edit({ components: [button] });
+        if (this.cachedConfig.tools?.include_summary) {
+          const toolSummary = buildToolAuditNote(resp.messages);
+          if (stripped[0]?.role === "assistant" && toolSummary) {
+            if (typeof stripped[0].content === "string") {
+              stripped[0].content += `\n\n${toolSummary}`;
+            } else {
+              stripped[0].content.push({ type: "text", text: toolSummary });
+            }
+          }
+        }
+
+        const reasoningMessages: ReasoningOutput[] = [];
+        for (const msg of resp.messages) {
+          if (msg.role !== "assistant") continue;
+          if (typeof msg.content === "string") continue;
+          const parts = msg.content.filter((p) => p.type === "reasoning");
+          if (parts.length === 0) continue;
+          reasoningMessages.push(...parts);
+        }
+        const reasoningResp = await reasoning;
+
+        const reasoningSummary = (
+          reasoningResp.length > 0 ? reasoningResp : reasoningMessages
+        )
+          .map((r) => r.text)
+          .join("\n\n");
+        await this.modelMessageOperator.create({
+          messageId: discordMessageCreated,
+          parentMessageId: msg.id,
+          messages: stripped,
+          imageIds:
+            currentMessageImageIds.length > 0
+              ? currentMessageImageIds
+              : undefined,
+          reasoningSummary,
+        });
+
+        if (reasoningSummary) {
+          const button = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId("show_reasoning_modal")
+              .setLabel("Show reasoning")
+              .setStyle(ButtonStyle.Secondary),
+          );
+          lastMsg.edit({ components: [button] });
+        }
+      };
+
+      // retry 3 times
+      const maxRetry = 3;
+      for (let i = 0; i < maxRetry; i++) {
+        try {
+          await generateStream();
+          break;
+        } catch (e) {
+          if (i + 1 === maxRetry) throw e;
+          if (lastMsg !== msg) await lastMsg.delete();
+          lastMsg = msg;
+          this.logger.logError(
+            `Encountered error while generating response, trying ({${i + 1}/${maxRetry}}`,
+            e,
+          );
+        }
       }
     } catch (e) {
       done = true;
