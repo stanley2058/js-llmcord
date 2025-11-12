@@ -685,8 +685,7 @@ export class DiscordOperator {
         }
       };
 
-      // retry 3 times
-      const maxRetry = 3;
+      const maxRetry = Math.max(1, this.cachedConfig.max_retry ?? 3);
       for (let i = 0; i < maxRetry; i++) {
         try {
           await generateStream();

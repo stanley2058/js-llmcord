@@ -8,6 +8,7 @@ export type Config = {
   max_images?: number;
   max_messages?: number;
   max_steps: number;
+  max_retry?: number;
   use_plain_responses?: boolean;
   allow_dms?: boolean;
   debug_message?: boolean;
@@ -44,8 +45,8 @@ export type Config = {
     user_id?: {
       enabled: boolean;
       header_name: string;
-    }
-  }
+    };
+  };
 };
 
 export type ProviderConfig = {

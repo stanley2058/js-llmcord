@@ -9,6 +9,7 @@ max_text: 100000
 max_images: 5
 max_messages: 25
 max_steps: 10
+max_retry: 3
 
 use_plain_responses: false
 allow_dms: true
