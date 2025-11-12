@@ -1,6 +1,7 @@
 import {
   asSchema,
   streamText,
+  type CallWarning,
   type FinishReason,
   type JSONValue,
   type ModelMessage,
@@ -66,6 +67,9 @@ export function streamTextWithCompatibleTools({
     Promise.withResolvers<{ messages: ModelMessage[] }>();
   const { promise: reasoning, resolve: resolveReasoning } =
     Promise.withResolvers<ReasoningOutput[]>();
+  const { promise: warnings, resolve: resolveWarnings } = Promise.withResolvers<
+    CallWarning[] | undefined
+  >();
 
   if (messages.length === 0) {
     throw new Error(
@@ -75,14 +79,16 @@ export function streamTextWithCompatibleTools({
 
   let callSequence = 0;
   const generateCallId = () => `${toolCallIdPrefix}-${++callSequence}`;
+  const accumulatedWarnings: CallWarning[] = [];
   const textStreamOut = async function* () {
     while (true) {
-      const { textStream, finishReason, response, reasoning } = streamText({
-        ...rest,
-        messages: [compatibleSystemPrompt, ...messages],
-        prompt: undefined,
-        tools: undefined,
-      });
+      const { textStream, finishReason, response, reasoning, warnings } =
+        streamText({
+          ...rest,
+          messages: [compatibleSystemPrompt, ...messages],
+          prompt: undefined,
+          tools: undefined,
+        });
 
       let buffer = "";
       let toolMatch: RegExpExecArray | null = null;
@@ -130,11 +136,15 @@ export function streamTextWithCompatibleTools({
       messages.push(...respMessages);
       finalResponsesAccu.push(...respMessages);
       reasoningMessages.push(...(await reasoning));
+      accumulatedWarnings.push(...((await warnings) || []));
 
       const [, toolName, payload] = toolMatch ?? [];
       const tool = toolName && tools?.[toolName];
       if (!toolName || !tool || !tool.execute) {
         resolveReasoning(reasoningMessages);
+        resolveWarnings(
+          accumulatedWarnings.length ? accumulatedWarnings : undefined,
+        );
         resolveFinishReason(await finishReason);
 
         if (carryOver) {
@@ -199,6 +209,7 @@ export function streamTextWithCompatibleTools({
     finishReason,
     response: finalResponses,
     reasoning,
+    warnings,
   };
 }
 

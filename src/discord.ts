@@ -521,7 +521,8 @@ export class DiscordOperator {
             ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
             : streamText(opts);
 
-        const { textStream, finishReason, response, reasoning } = stream;
+        const { textStream, finishReason, response, reasoning, warnings } =
+          stream;
         if (this.cachedConfig.debug_message) {
           this.logger.logDebug(inspect(messages));
         }
@@ -585,7 +586,8 @@ export class DiscordOperator {
 
             const accuContent = responseQueue[responseQueue.length - 1]!;
             const desc = done ? accuContent : accuContent + STREAMING_INDICATOR;
-            emb.setDescription(desc);
+            emb.setDescription(desc || "*\<empty_string\>*");
+            if (done && !desc) this.logger.logWarn("stream response is empty");
             emb.setColor(done ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE);
             flushed = done;
 
@@ -611,13 +613,58 @@ export class DiscordOperator {
         }, EDIT_DELAY_SECONDS * 1000);
 
         for await (const textPart of textStream) contentAcc += textPart;
-        await finishReason;
+        const reason = await finishReason;
         done = true;
 
         if (this.cachedConfig.debug_message) {
-          this.logger.logDebug(
-            `Stream finished with reason: ${await finishReason}`,
-          );
+          this.logger.logDebug(`Stream finished with reason: ${reason}`);
+        }
+
+        const warns = await warnings;
+        if (warns && warns.length > 0) {
+          this.logger.logWarn("Warnings from model provider:");
+          for (const warn of warns) {
+            switch (warn.type) {
+              case "unsupported-setting":
+                this.logger.logWarn(
+                  `Unsupported setting: ${warn.setting}`,
+                  warn.details,
+                );
+                break;
+              case "unsupported-tool":
+                this.logger.logWarn(
+                  `Unsupported tool: ${warn.tool}`,
+                  warn.details,
+                );
+                break;
+              case "other":
+                this.logger.logWarn(warn.message);
+                break;
+            }
+          }
+        }
+
+        switch (reason) {
+          case "stop":
+          case "tool-calls":
+            break;
+          case "length":
+            this.logger.logWarn(
+              "context too long, truncate input and try again",
+            );
+            break;
+          case "error":
+            this.logger.logError("error while generating response");
+            break;
+          case "content-filter":
+            this.logger.logWarn("blocked by content filter");
+            break;
+          case "other":
+          case "unknown":
+            this.logger.logError(
+              `stream finished with unknown reason (${reason})`,
+            );
+            break;
         }
 
         if (usePlainResponses) {
