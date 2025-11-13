@@ -661,7 +661,7 @@ export class DiscordOperator {
             break;
           case "other":
           case "unknown":
-            this.logger.logError(
+            this.logger.logInfo(
               `stream finished with unknown reason (${reason})`,
             );
             break;
