@@ -51,6 +51,7 @@ providers:
   openai:
     base_url: https://api.openai.com/v1
     api_key: 
+    api_schema: completion # or `responses`
   openrouter:
     base_url: https://openrouter.ai/api/v1
     api_key: 

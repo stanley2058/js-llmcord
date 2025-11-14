@@ -33,6 +33,7 @@ import {
   stepCountIs,
   streamText,
   type DataContent,
+  type LanguageModel,
   type ModelMessage,
   type ReasoningOutput,
   type TextPart,
@@ -422,7 +423,18 @@ export class DiscordOperator {
     }
     const isAnthropic =
       provider === "anthropic" || model.startsWith("anthropic/");
-    const modelInstance = providers[provider]!(model);
+
+    let modelInstance: LanguageModel;
+    if (provider === "openai") {
+      const api =
+        this.cachedConfig.providers.openai.api_schema === "responses"
+          ? "responses"
+          : "completion";
+      modelInstance = providers.openai![api](model);
+    } else {
+      modelInstance = providers[provider]!(model);
+    }
+
     const { messages, userWarnings, currentMessageImageIds } =
       await this.buildMessages(msg);
 

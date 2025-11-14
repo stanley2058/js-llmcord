@@ -49,7 +49,7 @@ export type Config = {
   };
 };
 
-export type ProviderConfig = {
+export type ProviderConfig = Record<string, string> & {
   base_url: string;
   api_key?: string;
   extra_headers?: Record<string, string>;
