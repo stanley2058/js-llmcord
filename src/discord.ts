@@ -689,6 +689,7 @@ export class DiscordOperator {
         }
 
         await pusherPromise;
+        if (contentAcc.length === 0) throw new Error("No content generated");
         if (this.cachedConfig.debug_message) {
           this.logger.logDebug(`Done writing to Discord`);
         }
