@@ -32,7 +32,9 @@ import {
 import {
   stepCountIs,
   streamText,
+  type CallWarning,
   type DataContent,
+  type FinishReason,
   type LanguageModel,
   type ModelMessage,
   type ReasoningOutput,
@@ -53,6 +55,7 @@ import {
   getUsersFromModelMessages,
 } from "./rag/recommend";
 import { Logger } from "./logger";
+import { setTimeout } from "node:timers/promises";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -97,7 +100,6 @@ export class DiscordOperator {
   private curProviderModel = "openai/gpt-4o";
   private toolManager: ToolManager;
   private cachedConfig: Config = {} as Config;
-  private lastTypingSentAt = new Map<string, number>();
   private modelMessageOperator = new ModelMessageOperator();
   private trimInterval: NodeJS.Timeout;
   private logger = new Logger({ module: "discord" });
@@ -392,12 +394,12 @@ export class DiscordOperator {
     }
   };
 
-  private messageCreate = async (msg: Message) => {
+  private async prepareMessageCreate(msg: Message) {
     this.cachedConfig = await getConfig();
     // prevent infinite loop
-    if (msg.author.bot) return;
+    if (msg.author.bot) return false;
     const isDM = msg.channel.type === ChannelType.DM;
-    if (!isDM && !msg.mentions.users.has(this.client.user!.id)) return;
+    if (!isDM && !msg.mentions.users.has(this.client.user!.id)) return false;
     const { roleIds, channelIds } = this.getChannelsAndRolesFromMessage(msg);
     const canRespond = this.getChannelPermission({
       messageAuthorId: msg.author.id,
@@ -405,14 +407,14 @@ export class DiscordOperator {
       roleIds,
       channelIds,
     });
-    if (!canRespond) return;
+    if (!canRespond) return false;
     const { provider, model, gatewayAdapter } = parseProviderModelString(
       this.curProviderModel,
     );
     const providers = await getProvidersFromConfig();
     if (!providers[provider]) {
       this.logger.logError(`Configuration not found for provider: ${provider}`);
-      return;
+      return false;
     }
     if (gatewayAdapter) {
       this.logger.logInfo(
@@ -435,6 +437,21 @@ export class DiscordOperator {
       modelInstance = providers[provider]!(model);
     }
 
+    return {
+      modelInstance,
+      isAnthropic,
+      providers,
+      provider,
+      model,
+      gatewayAdapter,
+    };
+  }
+
+  private async prepareStreamOptions(msg: Message) {
+    const prepared = await this.prepareMessageCreate(msg);
+    if (!prepared) return false;
+    const { modelInstance, isAnthropic, provider, gatewayAdapter } = prepared;
+
     const { messages, userWarnings, currentMessageImageIds } =
       await this.buildMessages(msg);
 
@@ -443,95 +460,235 @@ export class DiscordOperator {
     if (!usePlainResponses) {
       warnEmbed = new EmbedBuilder();
       const sorted = Array.from(userWarnings).sort();
-      if (sorted.length)
+      if (sorted.length) {
         warnEmbed.setFields(
           sorted.map((w) => ({ name: w, value: "", inline: false })),
         );
+      }
     }
 
-    let done = false;
-    try {
-      await this.sendTyping(msg);
+    const params = this.cachedConfig.models[this.curProviderModel];
+    const {
+      tools: useTools,
+      anthropic_cache_control,
+      temperature,
+      max_tokens,
+      top_p,
+      top_k,
+      ...rest
+    } = params ?? {};
+    const toolsDisabledForModel = useTools === false;
+    const useCompatibleTools = useTools === "compatible";
+    const restPart = params
+      ? {
+          providerOptions: {
+            [gatewayAdapter ?? provider]: keysToCamel(rest),
+          },
+        }
+      : {};
 
-      // Decide if tools should be enabled for this model
-      const params = this.cachedConfig.models[this.curProviderModel];
-      const {
-        tools: useTools,
-        anthropic_cache_control,
-        temperature,
-        max_tokens,
-        top_p,
-        top_k,
-        ...rest
-      } = params ?? {};
-      const toolsDisabledForModel = useTools === false;
-      const useCompatibleTools = useTools === "compatible";
-      const restPart = params
-        ? {
-            providerOptions: {
-              [gatewayAdapter ?? provider]: keysToCamel(rest),
-            },
-          }
-        : {};
+    const tools = toolsDisabledForModel
+      ? undefined
+      : await this.toolManager.getTools();
 
-      const tools = toolsDisabledForModel
-        ? undefined
-        : await this.toolManager.getTools();
+    if (isAnthropic && anthropic_cache_control) {
+      this.logger.logDebug(
+        "Patching system message for Anthropic API with cache enabled",
+      );
+      for (const msg of messages) {
+        if (msg.role !== "system") continue;
+        msg.providerOptions = {
+          ...msg.providerOptions,
+          // default is 5 mins
+          cacheControl: { type: "ephemeral" },
+        };
+      }
+    }
 
-      if (isAnthropic && anthropic_cache_control) {
-        this.logger.logDebug(
-          "Patching system message for Anthropic API with cache enabled",
+    const opts: StreamTextParams = {
+      model: modelInstance,
+      messages: messages.reverse(),
+      maxOutputTokens: typeof max_tokens === "number" ? max_tokens : undefined,
+      temperature: typeof temperature === "number" ? temperature : undefined,
+      topP: typeof top_p === "number" ? top_p : undefined,
+      topK: typeof top_k === "number" ? top_k : undefined,
+      ...restPart,
+      tools,
+      stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
+      onStepFinish: (step) => {
+        for (const toolCall of step.toolCalls || []) {
+          this.logger.logInfo(`[Tool Call] Called: \`${toolCall.toolName}\``);
+          this.logger.logDebug(JSON.stringify(toolCall.input));
+        }
+      },
+    };
+
+    if (this.cachedConfig.additional_headers) {
+      if (this.cachedConfig.additional_headers?.user_id?.enabled) {
+        const userIds = getUsersFromModelMessages(messages);
+        opts.headers = {
+          ...opts.headers,
+          [this.cachedConfig.additional_headers?.user_id?.header_name]: [
+            ...userIds,
+          ].join(","),
+        };
+      }
+    }
+
+    if (tools && useCompatibleTools) {
+      this.logger.logDebug("Using tools in compatible mode");
+    }
+
+    return {
+      opts,
+      messages,
+      currentMessageImageIds,
+      compatibleMode: Boolean(tools && useCompatibleTools),
+      usePlainResponses,
+      warnEmbed,
+    };
+  }
+
+  private logStreamWarning(warns: CallWarning[] | null | undefined) {
+    if (!warns || warns.length === 0) return;
+    this.logger.logWarn("Warnings from model provider:");
+    for (const warn of warns) {
+      switch (warn.type) {
+        case "unsupported-setting":
+          this.logger.logWarn(
+            `Unsupported setting: ${warn.setting}`,
+            warn.details,
+          );
+          break;
+        case "unsupported-tool":
+          this.logger.logWarn(`Unsupported tool: ${warn.tool}`, warn.details);
+          break;
+        case "other":
+          this.logger.logWarn(warn.message);
+          break;
+      }
+    }
+  }
+
+  private logStreamFinishReason(reason: FinishReason) {
+    switch (reason) {
+      case "stop":
+      case "tool-calls":
+        break;
+      case "length":
+        this.logger.logWarn("context too long, truncate input and try again");
+        break;
+      case "error":
+        this.logger.logError("error while generating response");
+        break;
+      case "content-filter":
+        this.logger.logWarn("blocked by content filter");
+        break;
+      case "other":
+      case "unknown":
+        this.logger.logInfo(`stream finished with unknown reason (${reason})`);
+        break;
+    }
+  }
+
+  private async startContentPusher({
+    baseMsg,
+    getContent,
+    getMaxLength,
+    finishReason,
+    warnEmbed,
+  }: {
+    baseMsg: Message;
+    getContent: () => string;
+    getMaxLength: (isStreaming: boolean) => number;
+    finishReason: Promise<FinishReason>;
+    warnEmbed: EmbedBuilder | null;
+  }) {
+    let streaming = true;
+    finishReason.then(() => (streaming = false));
+
+    let lastMsg = baseMsg;
+    let pushedIndex = 0;
+    const discordMessageCreated: string[] = [];
+    const responseQueue: string[] = [""];
+
+    while (true) {
+      const content = getContent();
+      const maxLength = getMaxLength(streaming);
+      const delta = content.slice(pushedIndex);
+
+      if (delta.length > 0) {
+        const buffer = responseQueue.at(-1) ?? "";
+        const tempBuf = buffer.concat(delta);
+        const isOverflow = tempBuf.length > maxLength;
+        let currentBuffer = tempBuf.slice(0, maxLength);
+        const showStreamIndicator = streaming && !isOverflow;
+        if (showStreamIndicator) currentBuffer += STREAMING_INDICATOR;
+
+        responseQueue[responseQueue.length - 1] = currentBuffer;
+        pushedIndex += currentBuffer.length - buffer.length;
+
+        const emb = warnEmbed
+          ? new EmbedBuilder(warnEmbed.toJSON())
+          : new EmbedBuilder();
+        emb.setDescription(currentBuffer || "*\<empty_string\>*");
+        if (!streaming && !currentBuffer) {
+          this.logger.logWarn("stream response is empty");
+        }
+        emb.setColor(
+          showStreamIndicator ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE,
         );
-        for (const msg of messages) {
-          if (msg.role !== "system") continue;
-          msg.providerOptions = {
-            ...msg.providerOptions,
-            // default is 5 mins
-            cacheControl: { type: "ephemeral" },
-          };
+
+        if (
+          discordMessageCreated.length < responseQueue.length ||
+          baseMsg === lastMsg
+        ) {
+          lastMsg = await lastMsg.reply({
+            embeds: [emb],
+            allowedMentions: { parse: [], repliedUser: false },
+          });
+          discordMessageCreated.push(lastMsg.id);
+        } else {
+          await lastMsg.edit({ embeds: [emb] });
         }
       }
 
-      const opts: StreamTextParams = {
-        model: modelInstance,
-        messages: messages.reverse(),
-        maxOutputTokens:
-          typeof max_tokens === "number" ? max_tokens : undefined,
-        temperature: typeof temperature === "number" ? temperature : undefined,
-        topP: typeof top_p === "number" ? top_p : undefined,
-        topK: typeof top_k === "number" ? top_k : undefined,
-        ...restPart,
-        tools,
-        stopWhen: stepCountIs(this.cachedConfig.max_steps ?? 10),
-        onStepFinish: (step) => {
-          for (const toolCall of step.toolCalls || []) {
-            this.logger.logInfo(`[Tool Call] Called: \`${toolCall.toolName}\``);
-            this.logger.logDebug(JSON.stringify(toolCall.input));
-          }
-        },
-      };
-
-      if (this.cachedConfig.additional_headers) {
-        if (this.cachedConfig.additional_headers?.user_id?.enabled) {
-          const userIds = getUsersFromModelMessages(messages);
-          opts.headers = {
-            ...opts.headers,
-            [this.cachedConfig.additional_headers?.user_id?.header_name]: [
-              ...userIds,
-            ].join(","),
-          };
-        }
+      if (!streaming) {
+        if (getContent().length !== pushedIndex) continue;
+        break;
       }
+      await setTimeout(EDIT_DELAY_SECONDS * 1000);
+    }
 
-      if (tools && useCompatibleTools)
-        this.logger.logDebug("Using tools in compatible mode");
+    return {
+      lastMsg,
+      responseQueue,
+      discordMessageCreated,
+    };
+  }
 
+  private messageCreate = async (msg: Message) => {
+    const options = await this.prepareStreamOptions(msg);
+    if (!options) return;
+    const {
+      opts,
+      messages,
+      currentMessageImageIds,
+      compatibleMode,
+      usePlainResponses,
+      warnEmbed,
+    } = options;
+
+    const typingInterval = setInterval(() => {
+      if (!("sendTyping" in msg.channel)) return clearInterval(typingInterval);
+      msg.channel.sendTyping().catch(console.error);
+    }, 1000 * 5);
+    try {
       let lastMsg = msg;
       const generateStream = async () => {
-        const stream =
-          tools && useCompatibleTools
-            ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
-            : streamText(opts);
+        const stream = compatibleMode
+          ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
+          : streamText(opts);
 
         const { textStream, finishReason, response, reasoning, warnings } =
           stream;
@@ -540,144 +697,24 @@ export class DiscordOperator {
         }
 
         let contentAcc = "";
-        let pushedIndex = 0;
-        const discordMessageCreated: string[] = [];
-        let flushed = false;
-        const responseQueue: string[] = [];
-        const { promise: pusherPromise, resolve: pusherResolve } =
-          Promise.withResolvers();
-        let pushing = false;
-        const getMaxForCurrent = (isStreaming: boolean) =>
-          usePlainResponses
-            ? 4000
-            : isStreaming
-              ? 4096 - STREAMING_INDICATOR.length
-              : 4096;
-        const pusher = setInterval(async () => {
-          if (pushing) return; // prevent re-entrancy
-          pushing = true;
-          try {
-            const upToDate = pushedIndex === contentAcc.length;
-            if (flushed && done && upToDate) {
-              pusherResolve();
-              clearInterval(pusher);
-              return;
-            }
-            if (upToDate && !(done && !flushed)) return;
-
-            // Consume all new data since last tick
-            const delta = contentAcc.slice(pushedIndex);
-            pushedIndex = contentAcc.length;
-
-            // Ensure at least one bucket
-            if (responseQueue.length === 0) responseQueue.push("");
-
-            let i = 0;
-            while (i < delta.length) {
-              const isStreamingEmbed = !done && i < delta.length; // last (active) bucket
-              const maxLen = getMaxForCurrent(isStreamingEmbed);
-
-              const lastIdx = responseQueue.length - 1;
-              const lastLen = responseQueue[lastIdx]!.length;
-              const room = Math.max(0, maxLen - lastLen);
-
-              if (room === 0) {
-                // Start a new bucket
-                responseQueue.push("");
-                continue;
-              }
-
-              const take = Math.min(room, delta.length - i);
-              responseQueue[lastIdx] += delta.slice(i, i + take);
-              i += take;
-            }
-
-            const emb = warnEmbed
-              ? new EmbedBuilder(warnEmbed.toJSON())
-              : new EmbedBuilder();
-
-            const accuContent = responseQueue[responseQueue.length - 1]!;
-            const desc = done ? accuContent : accuContent + STREAMING_INDICATOR;
-            emb.setDescription(desc || "*\<empty_string\>*");
-            if (done && !desc) this.logger.logWarn("stream response is empty");
-            emb.setColor(done ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE);
-            flushed = done;
-
-            if (!flushed) await this.sendTyping(msg);
-            else this.lastTypingSentAt.delete(msg.channel.id);
-
-            // New Discord message only when a new bucket appeared (or first send)
-            if (
-              discordMessageCreated.length < responseQueue.length ||
-              msg === lastMsg
-            ) {
-              lastMsg = await lastMsg.reply({
-                embeds: [emb],
-                allowedMentions: { parse: [], repliedUser: false },
-              });
-              discordMessageCreated.push(lastMsg.id);
-            } else {
-              await lastMsg.edit({ embeds: [emb] });
-            }
-          } finally {
-            pushing = false;
-          }
-        }, EDIT_DELAY_SECONDS * 1000);
+        const pusherPromise = this.startContentPusher({
+          baseMsg: msg,
+          getContent: () => contentAcc,
+          getMaxLength: (isStreaming) =>
+            usePlainResponses
+              ? 4000
+              : isStreaming
+                ? 4096 - STREAMING_INDICATOR.length
+                : 4096,
+          finishReason,
+          warnEmbed,
+        });
 
         for await (const textPart of textStream) contentAcc += textPart;
         const reason = await finishReason;
-        done = true;
-
-        if (this.cachedConfig.debug_message) {
-          this.logger.logDebug(`Stream finished with reason: ${reason}`);
-        }
-
-        const warns = await warnings;
-        if (warns && warns.length > 0) {
-          this.logger.logWarn("Warnings from model provider:");
-          for (const warn of warns) {
-            switch (warn.type) {
-              case "unsupported-setting":
-                this.logger.logWarn(
-                  `Unsupported setting: ${warn.setting}`,
-                  warn.details,
-                );
-                break;
-              case "unsupported-tool":
-                this.logger.logWarn(
-                  `Unsupported tool: ${warn.tool}`,
-                  warn.details,
-                );
-                break;
-              case "other":
-                this.logger.logWarn(warn.message);
-                break;
-            }
-          }
-        }
-
-        switch (reason) {
-          case "stop":
-          case "tool-calls":
-            break;
-          case "length":
-            this.logger.logWarn(
-              "context too long, truncate input and try again",
-            );
-            break;
-          case "error":
-            this.logger.logError("error while generating response");
-            break;
-          case "content-filter":
-            this.logger.logWarn("blocked by content filter");
-            break;
-          case "other":
-          case "unknown":
-            this.logger.logInfo(
-              `stream finished with unknown reason (${reason})`,
-            );
-            break;
-        }
+        let { lastMsg, responseQueue, discordMessageCreated } =
+          await pusherPromise;
+        if (contentAcc.length === 0) throw new Error("No content generated");
 
         if (usePlainResponses) {
           for (const content of responseQueue) {
@@ -688,10 +725,13 @@ export class DiscordOperator {
           }
         }
 
-        await pusherPromise;
-        if (contentAcc.length === 0) throw new Error("No content generated");
+        clearInterval(typingInterval);
+
+        this.logStreamWarning(await warnings);
+        this.logStreamFinishReason(reason);
+
         if (this.cachedConfig.debug_message) {
-          this.logger.logDebug(`Done writing to Discord`);
+          this.logger.logDebug(`Stream finished with reason: ${reason}`);
         }
 
         const resp = await response;
@@ -761,8 +801,9 @@ export class DiscordOperator {
         }
       }
     } catch (e) {
-      done = true;
       this.logger.logError("Error while generating response", e);
+    } finally {
+      clearInterval(typingInterval);
     }
   };
 
@@ -1142,18 +1183,6 @@ export class DiscordOperator {
 
     if (isBadUser || isBadChannel) return false;
     return true;
-  }
-
-  private async sendTyping(msg: Message) {
-    const TYPING_EXPIRY = 8 * 1000; // actually 10s, but with some buffer
-    const now = Date.now();
-    const last = this.lastTypingSentAt.get(msg.channel.id);
-    const canTrigger = !last || now - last > TYPING_EXPIRY;
-    if (!canTrigger) return;
-    if ("sendTyping" in msg.channel) {
-      await msg.channel.sendTyping();
-      this.lastTypingSentAt.set(msg.channel.id, now);
-    }
   }
 
   async destroy() {
