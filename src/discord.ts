@@ -623,7 +623,6 @@ export class DiscordOperator {
         const isOverflow = tempBuf.length > maxLength;
         let currentBuffer = tempBuf.slice(0, maxLength);
         const showStreamIndicator = streaming && !isOverflow;
-        if (showStreamIndicator) currentBuffer += STREAMING_INDICATOR;
 
         responseQueue[responseQueue.length - 1] = currentBuffer;
         pushedIndex += currentBuffer.length - buffer.length;
@@ -631,12 +630,15 @@ export class DiscordOperator {
         const emb = warnEmbed
           ? new EmbedBuilder(warnEmbed.toJSON())
           : new EmbedBuilder();
-        emb.setDescription(currentBuffer || "*\<empty_string\>*");
-        if (!streaming && !currentBuffer) {
+        const outputBuffer = showStreamIndicator
+          ? currentBuffer + STREAMING_INDICATOR
+          : currentBuffer;
+        emb.setDescription(outputBuffer || "*\<empty_string\>*");
+        if (!streaming && !outputBuffer) {
           this.logger.logWarn("stream response is empty");
         }
         emb.setColor(
-          showStreamIndicator ? EMBED_COLOR_COMPLETE : EMBED_COLOR_INCOMPLETE,
+          showStreamIndicator ? EMBED_COLOR_INCOMPLETE : EMBED_COLOR_COMPLETE,
         );
 
         if (
@@ -651,6 +653,8 @@ export class DiscordOperator {
         } else {
           await lastMsg.edit({ embeds: [emb] });
         }
+
+        if (isOverflow) responseQueue.push("");
       }
 
       if (!streaming) {
@@ -679,12 +683,10 @@ export class DiscordOperator {
       warnEmbed,
     } = options;
 
-    const typingInterval = setInterval(() => {
-      if (!("sendTyping" in msg.channel)) return clearInterval(typingInterval);
-      msg.channel.sendTyping().catch(console.error);
-    }, 1000 * 5);
+    const typingInterval = setInterval(() => this.sendTyping(msg), 1000 * 5);
     try {
-      let lastMsg = msg;
+      this.sendTyping(msg);
+
       const generateStream = async () => {
         const stream = compatibleMode
           ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
@@ -714,7 +716,12 @@ export class DiscordOperator {
         const reason = await finishReason;
         let { lastMsg, responseQueue, discordMessageCreated } =
           await pusherPromise;
-        if (contentAcc.length === 0) throw new Error("No content generated");
+        if (contentAcc.length === 0) {
+          await Promise.all(
+            discordMessageCreated.map((id) => msg.channel.messages.delete(id)),
+          );
+          throw new Error("No content generated");
+        }
 
         if (usePlainResponses) {
           for (const content of responseQueue) {
@@ -792,8 +799,6 @@ export class DiscordOperator {
           break;
         } catch (e) {
           if (i + 1 === maxRetry) throw e;
-          if (lastMsg !== msg) await lastMsg.delete();
-          lastMsg = msg;
           this.logger.logError(
             `Encountered error while generating response, trying ({${i + 1}/${maxRetry}}`,
             e,
@@ -810,6 +815,11 @@ export class DiscordOperator {
   private messageDelete = async (msg: { id: string }) => {
     await this.modelMessageOperator.removeAll(msg.id);
   };
+
+  private sendTyping(msg: Message) {
+    if (!("sendTyping" in msg.channel)) return;
+    msg.channel.sendTyping().catch(console.error);
+  }
 
   private async buildMessages(msg: Message) {
     const params = this.cachedConfig.models[this.curProviderModel];
