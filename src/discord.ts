@@ -664,6 +664,19 @@ export class DiscordOperator {
       await setTimeout(EDIT_DELAY_SECONDS * 1000);
     }
 
+    // edit last message, ensure it's showing the "done" state
+    const lastChunk = responseQueue.at(-1);
+    if (lastMsg !== baseMsg && lastChunk) {
+      const emb = warnEmbed
+        ? new EmbedBuilder(warnEmbed.toJSON())
+        : new EmbedBuilder();
+
+      emb.setDescription(lastChunk || "*\<empty_string\>*");
+      emb.setColor(EMBED_COLOR_COMPLETE);
+
+      await lastMsg.edit({ embeds: [emb] });
+    }
+
     return {
       lastMsg,
       responseQueue,
