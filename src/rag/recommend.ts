@@ -12,7 +12,7 @@ const DEFAULT_CAPS: Record<EmbeddingType, number> = {
 const DEFAULT_THRESHOLDS: Record<EmbeddingType, number> = {
   intent: 0.6,
   preference: 0.55,
-  fact: 0.65,
+  fact: 0.6,
 };
 
 // Combined score = 0.75 * relevance + 0.25 * time_score
