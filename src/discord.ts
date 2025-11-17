@@ -74,7 +74,7 @@ const VISION_MODEL_TAGS = [
 ] as const;
 
 const STREAMING_INDICATOR = " ⚪";
-const EDIT_DELAY_SECONDS = 1;
+const EDIT_DELAY_SECONDS = 0.1;
 
 const EMBED_COLOR_COMPLETE = Colors.Blue;
 const EMBED_COLOR_INCOMPLETE = Colors.Yellow;
