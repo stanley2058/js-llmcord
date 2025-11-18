@@ -6,20 +6,20 @@
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^2.0.18",
-    "@ai-sdk/groq": "^2.0.24",
-    "@ai-sdk/openai": "^2.0.34",
-    "@ai-sdk/openai-compatible": "^1.0.18",
-    "@ai-sdk/xai": "^2.0.22",
-    "@modelcontextprotocol/sdk": "^1.18.1",
-    "@openrouter/ai-sdk-provider": "^1.2.0",
-    "ai": "^5.0.51",
-    "discord.js": "^14.22.1",
-    "superjson": "^2.2.2",
+    "@ai-sdk/anthropic": "^2.0.45",
+    "@ai-sdk/groq": "^2.0.29",
+    "@ai-sdk/openai": "^2.0.68",
+    "@ai-sdk/openai-compatible": "^1.0.27",
+    "@ai-sdk/xai": "^2.0.33",
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "@openrouter/ai-sdk-provider": "^1.2.3",
+    "ai": "^5.0.94",
+    "discord.js": "^14.25.0",
+    "superjson": "^2.2.5",
     "uploadthing": "^7.7.4",
-    "zod": "^4.1.11"
+    "zod": "^4.1.12"
   }
 }
