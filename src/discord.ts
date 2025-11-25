@@ -499,8 +499,9 @@ export class DiscordOperator {
         if (msg.role !== "system") continue;
         msg.providerOptions = {
           ...msg.providerOptions,
-          // default is 5 mins
-          cacheControl: { type: "ephemeral" },
+          anthropic: {
+            cacheControl: { type: "ephemeral" },
+          },
         };
       }
     }
