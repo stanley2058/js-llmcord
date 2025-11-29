@@ -48,7 +48,7 @@ export class Logger implements ILogger {
   }
 
   logError(message: any, ...args: any[]) {
-    this.log("error", message, ...args);
+    this.log("error", message, ...args, new Error().stack);
   }
 
   setLogLevel(level: LogLevel) {
