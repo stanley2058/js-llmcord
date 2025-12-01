@@ -56,6 +56,7 @@ import {
 } from "./rag/recommend";
 import { Logger } from "./logger";
 import { setTimeout } from "node:timers/promises";
+import { randomUUID } from "node:crypto";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -104,6 +105,7 @@ export class DiscordOperator {
   private trimInterval: NodeJS.Timeout;
   private logger = new Logger({ module: "discord" });
   private statusInterval: NodeJS.Timeout | null = null;
+  private cancellationMap = new Map<string, AbortController>();
 
   constructor() {
     this.client = new Client({
@@ -246,32 +248,54 @@ export class DiscordOperator {
   private interactionCreate = async (interaction: Interaction<CacheType>) => {
     this.cachedConfig = await getConfig();
 
-    if (
-      interaction.isButton() &&
-      interaction.customId === "show_reasoning_modal"
-    ) {
-      this.logger.logDebug("[Interaction] show_reasoning_modal");
+    if (interaction.isButton()) {
+      if (interaction.customId === "show_reasoning_modal") {
+        this.logger.logDebug("[Interaction] show_reasoning_modal");
 
-      const messageId = interaction.message.id;
-      const reasoning = this.modelMessageOperator.getReasoning(messageId);
-      const existing = reasoning?.reasoning_summary ?? "No reasoning found.";
+        const messageId = interaction.message.id;
+        const reasoning = this.modelMessageOperator.getReasoning(messageId);
+        const existing = reasoning?.reasoning_summary ?? "No reasoning found.";
 
-      const modal = new ModalBuilder()
-        .setCustomId(`reasoning_modal:${messageId}`)
-        .setTitle("Reasoning summary");
+        const modal = new ModalBuilder()
+          .setCustomId(`reasoning_modal:${messageId}`)
+          .setTitle("Reasoning summary");
 
-      const input = new TextInputBuilder()
-        .setCustomId("reasoning_text")
-        .setLabel("Model's reasoning summary")
-        .setStyle(TextInputStyle.Paragraph)
-        .setValue(existing.slice(0, 1900))
-        .setRequired(false);
+        const input = new TextInputBuilder()
+          .setCustomId("reasoning_text")
+          .setLabel("Model's reasoning summary")
+          .setStyle(TextInputStyle.Paragraph)
+          .setValue(existing.slice(0, 1900))
+          .setRequired(false);
 
-      const row = new ActionRowBuilder<TextInputBuilder>().addComponents(input);
-      modal.addComponents(row);
+        const row = new ActionRowBuilder<TextInputBuilder>().addComponents(
+          input,
+        );
+        modal.addComponents(row);
 
-      await interaction.showModal(modal);
-      return;
+        await interaction.showModal(modal);
+        return;
+      }
+
+      if (interaction.customId.startsWith("cancel_")) {
+        const id = interaction.customId.replace("cancel_", "");
+        const controller = this.cancellationMap.get(id);
+
+        if (!controller) {
+          await interaction.reply({
+            content: "This generation is no longer active.",
+            flags: MessageFlags.Ephemeral,
+          });
+          return;
+        }
+
+        controller.abort();
+        this.cancellationMap.delete(id);
+        await interaction.reply({
+          content: "Request cancelled.",
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
     }
 
     if (interaction.type === InteractionType.ApplicationCommandAutocomplete) {
@@ -506,6 +530,10 @@ export class DiscordOperator {
       }
     }
 
+    const controller = new AbortController();
+    const id = randomUUID();
+    this.cancellationMap.set(id, controller);
+
     const opts: StreamTextParams = {
       model: modelInstance,
       messages: messages.reverse(),
@@ -522,6 +550,7 @@ export class DiscordOperator {
           this.logger.logDebug(JSON.stringify(toolCall.input));
         }
       },
+      abortSignal: controller.signal,
     };
 
     if (this.cachedConfig.additional_headers) {
@@ -541,6 +570,7 @@ export class DiscordOperator {
     }
 
     return {
+      id,
       opts,
       messages,
       currentMessageImageIds,
@@ -689,6 +719,7 @@ export class DiscordOperator {
     const options = await this.prepareStreamOptions(msg);
     if (!options) return;
     const {
+      id,
       opts,
       messages,
       currentMessageImageIds,
@@ -698,7 +729,21 @@ export class DiscordOperator {
     } = options;
 
     const typingInterval = setInterval(() => this.sendTyping(msg), 1000 * 5);
+    let btnMessage: Message | null = null;
     try {
+      const cancelButton = new ButtonBuilder()
+        .setCustomId(`cancel_${id}`)
+        .setLabel("Cancel")
+        .setStyle(ButtonStyle.Danger);
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        cancelButton,
+      );
+      btnMessage = await msg.reply({
+        content: "*Replying...*",
+        components: [row],
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+
       this.sendTyping(msg);
 
       const generateStream = async () => {
@@ -823,6 +868,8 @@ export class DiscordOperator {
       this.logger.logError("Error while generating response", e);
     } finally {
       clearInterval(typingInterval);
+      this.cancellationMap.delete(id);
+      await btnMessage?.delete();
     }
   };
 

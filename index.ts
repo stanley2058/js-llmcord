@@ -14,4 +14,8 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled rejection at:", reason, promise);
+});
+
 main().catch(console.error);
