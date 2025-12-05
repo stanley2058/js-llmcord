@@ -682,7 +682,7 @@ export class DiscordOperator {
           });
           discordMessageCreated.push(lastMsg.id);
         } else {
-          await lastMsg.edit({ embeds: [emb] });
+          await this.safeEdit(lastMsg, { embeds: [emb] });
         }
 
         if (isOverflow) responseQueue.push("");
@@ -705,7 +705,7 @@ export class DiscordOperator {
       emb.setDescription(lastChunk || "*\<empty_string\>*");
       emb.setColor(EMBED_COLOR_COMPLETE);
 
-      await lastMsg.edit({ embeds: [emb] });
+      await this.safeEdit(lastMsg, { embeds: [emb] });
     }
 
     return {
@@ -847,7 +847,7 @@ export class DiscordOperator {
               .setLabel("Show reasoning")
               .setStyle(ButtonStyle.Secondary),
           );
-          lastMsg.edit({ components: [button] });
+          this.safeEdit(lastMsg, { components: [button] });
         }
       };
 
@@ -880,6 +880,24 @@ export class DiscordOperator {
   private sendTyping(msg: Message) {
     if (!("sendTyping" in msg.channel)) return;
     msg.channel.sendTyping().catch(console.error);
+  }
+
+  /**
+   * Safely edit a message, ensuring it's authored by the bot.
+   * Returns false if the message was not edited (not owned by bot).
+   */
+  private async safeEdit(
+    msg: Message,
+    options: Parameters<Message["edit"]>[0],
+  ): Promise<boolean> {
+    if (msg.author.id !== this.client.user?.id) {
+      this.logger.logWarn(
+        `Attempted to edit message not authored by bot: ${msg.id}`,
+      );
+      return false;
+    }
+    await msg.edit(options);
+    return true;
   }
 
   private async buildMessages(msg: Message) {
