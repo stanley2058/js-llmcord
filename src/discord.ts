@@ -605,6 +605,7 @@ export class DiscordOperator {
     switch (reason) {
       case "stop":
       case "tool-calls":
+        this.logger.logInfo(`stream finished with reason: ${reason}`);
         break;
       case "length":
         this.logger.logWarn("context too long, truncate input and try again");
@@ -626,17 +627,23 @@ export class DiscordOperator {
     baseMsg,
     getContent,
     getMaxLength,
-    finishReason,
+    streamDone,
     warnEmbed,
   }: {
     baseMsg: Message;
     getContent: () => string;
     getMaxLength: (isStreaming: boolean) => number;
-    finishReason: Promise<FinishReason>;
+    streamDone: Promise<void>;
     warnEmbed: EmbedBuilder | null;
   }) {
     let streaming = true;
-    finishReason.then(() => (streaming = false));
+    let loopIterations = 0;
+    streamDone.then(() => {
+      streaming = false;
+      this.logger.logDebug(
+        `[Pusher] streamDone resolved, loopIterations=${loopIterations}, contentLength=${getContent().length}`,
+      );
+    });
 
     let lastMsg = baseMsg;
     let pushedIndex = 0;
@@ -644,11 +651,13 @@ export class DiscordOperator {
     const responseQueue: string[] = [""];
 
     while (true) {
+      loopIterations++;
       const content = getContent();
       const maxLength = getMaxLength(streaming);
       const delta = content.slice(pushedIndex);
+      const needsInitialMessage = lastMsg === baseMsg && content.length > 0;
 
-      if (delta.length > 0) {
+      if (delta.length > 0 || needsInitialMessage) {
         const buffer = responseQueue.at(-1) ?? "";
         const tempBuf = buffer.concat(delta);
         const isOverflow = tempBuf.length > maxLength;
@@ -690,6 +699,9 @@ export class DiscordOperator {
 
       if (!streaming) {
         if (getContent().length !== pushedIndex) continue;
+        this.logger.logDebug(
+          `[Pusher] exiting loop: iterations=${loopIterations}, pushedIndex=${pushedIndex}, contentLength=${content.length}, messagesCreated=${discordMessageCreated.length}`,
+        );
         break;
       }
       await setTimeout(EDIT_DELAY_SECONDS * 1000);
@@ -697,7 +709,35 @@ export class DiscordOperator {
 
     // edit last message, ensure it's showing the "done" state
     const lastChunk = responseQueue.at(-1);
-    if (lastMsg !== baseMsg && lastChunk) {
+
+    // Recovery: if pusher loop somehow failed to create any message, flush content now
+    if (lastMsg === baseMsg && getContent().length > 0) {
+      this.logger.logError(
+        `[Pusher] BUG: lastMsg === baseMsg but content exists! contentLength=${getContent().length}, pushedIndex=${pushedIndex}, iterations=${loopIterations}. Attempting recovery...`,
+      );
+
+      const content = getContent();
+      const maxLength = getMaxLength(false);
+      // Split content into chunks and send them
+      for (let i = 0; i < content.length; i += maxLength) {
+        const chunk = content.slice(i, i + maxLength);
+        const emb = warnEmbed
+          ? new EmbedBuilder(warnEmbed.toJSON())
+          : new EmbedBuilder();
+        emb.setDescription(chunk || "*\<empty_string\>*");
+        emb.setColor(EMBED_COLOR_COMPLETE);
+
+        lastMsg = await lastMsg.reply({
+          embeds: [emb],
+          allowedMentions: { parse: [], repliedUser: false },
+        });
+        discordMessageCreated.push(lastMsg.id);
+        responseQueue.push(chunk);
+      }
+      this.logger.logInfo(
+        `[Pusher] Recovery complete, sent ${discordMessageCreated.length} message(s)`,
+      );
+    } else if (lastMsg !== baseMsg && lastChunk) {
       const emb = warnEmbed
         ? new EmbedBuilder(warnEmbed.toJSON())
         : new EmbedBuilder();
@@ -758,6 +798,13 @@ export class DiscordOperator {
         }
 
         let contentAcc = "";
+        const streamingDonePromise = new Promise<void>((resolve) => {
+          (async () => {
+            for await (const textPart of textStream) contentAcc += textPart;
+            resolve();
+          })();
+        });
+
         const pusherPromise = this.startContentPusher({
           baseMsg: msg,
           getContent: () => contentAcc,
@@ -767,11 +814,11 @@ export class DiscordOperator {
               : isStreaming
                 ? 4096 - STREAMING_INDICATOR.length
                 : 4096,
-          finishReason,
+          streamDone: streamingDonePromise,
           warnEmbed,
         });
 
-        for await (const textPart of textStream) contentAcc += textPart;
+        await streamingDonePromise;
         const reason = await finishReason;
         let { lastMsg, responseQueue, discordMessageCreated } =
           await pusherPromise;
@@ -793,6 +840,7 @@ export class DiscordOperator {
 
         clearInterval(typingInterval);
 
+        this.logger.logInfo(`received total text length: ${contentAcc.length}`);
         this.logStreamWarning(await warnings);
         this.logStreamFinishReason(reason);
 
@@ -891,7 +939,7 @@ export class DiscordOperator {
     options: Parameters<Message["edit"]>[0],
   ): Promise<boolean> {
     if (msg.author.id !== this.client.user?.id) {
-      this.logger.logWarn(
+      this.logger.logError(
         `Attempted to edit message not authored by bot: ${msg.id}`,
       );
       return false;
