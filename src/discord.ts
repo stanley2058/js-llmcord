@@ -649,7 +649,9 @@ export class DiscordOperator {
     let lastMsg = baseMsg;
     let pushedIndex = 0;
     const discordMessageCreated: string[] = [];
-    const responseQueue: string[] = [""];
+    // rawBuffers stores actual content without auto-closed tags
+    // We only apply tokenComplete for display, not for accumulation
+    const rawBuffers: string[] = [""];
 
     while (true) {
       loopIterations++;
@@ -659,25 +661,27 @@ export class DiscordOperator {
       const needsInitialMessage = lastMsg === baseMsg && content.length > 0;
 
       if (delta.length > 0 || needsInitialMessage) {
-        const buffer = responseQueue.at(-1) ?? "";
-        const tempBuf = buffer.concat(delta);
+        const rawBuffer = rawBuffers.at(-1) ?? "";
+        const tempBuf = rawBuffer.concat(delta);
         const isOverflow = tempBuf.length > maxLength;
 
-        const { completed: currentBuffer, overflow: overflowPrefix } =
+        // Only use tokenComplete for display purposes, not for buffer storage
+        const { completed: displayBuffer, overflow: overflowPrefix } =
           tokenComplete(tempBuf, maxLength);
 
         const showStreamIndicator = streaming && !isOverflow;
 
-        responseQueue[responseQueue.length - 1] = currentBuffer;
-        const rawContentLength = Math.min(tempBuf.length, maxLength);
-        pushedIndex += rawContentLength - buffer.length;
+        // Store raw content (up to maxLength) without auto-closed tags
+        const rawContentForThisChunk = tempBuf.slice(0, maxLength);
+        rawBuffers[rawBuffers.length - 1] = rawContentForThisChunk;
+        pushedIndex += rawContentForThisChunk.length - rawBuffer.length;
 
         const emb = warnEmbed
           ? new EmbedBuilder(warnEmbed.toJSON())
           : new EmbedBuilder();
         const outputBuffer = showStreamIndicator
-          ? currentBuffer + STREAMING_INDICATOR
-          : currentBuffer;
+          ? displayBuffer + STREAMING_INDICATOR
+          : displayBuffer;
         emb.setDescription(outputBuffer || "*\<empty_string\>*");
         if (!streaming && !outputBuffer) {
           this.logger.logWarn("stream response is empty");
@@ -687,7 +691,7 @@ export class DiscordOperator {
         );
 
         if (
-          discordMessageCreated.length < responseQueue.length ||
+          discordMessageCreated.length < rawBuffers.length ||
           baseMsg === lastMsg
         ) {
           lastMsg = await lastMsg.reply({
@@ -700,7 +704,7 @@ export class DiscordOperator {
         }
 
         // Start next chunk with opening tags for proper markdown continuation
-        if (isOverflow) responseQueue.push(overflowPrefix);
+        if (isOverflow) rawBuffers.push(overflowPrefix);
       }
 
       if (!streaming) {
@@ -713,7 +717,10 @@ export class DiscordOperator {
       await setTimeout(EDIT_DELAY_SECONDS * 1000);
     }
 
-    // edit last message, ensure it's showing the "done" state
+    // Build final completed buffers for display (apply tokenComplete only at the end)
+    const responseQueue = rawBuffers.map(
+      (raw) => tokenComplete(raw, getMaxLength(false)).completed,
+    );
     const lastChunk = responseQueue.at(-1);
 
     // Recovery: if pusher loop somehow failed to create any message, flush content now
