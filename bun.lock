@@ -8,13 +8,14 @@
         "@ai-sdk/anthropic": "^2.0.45",
         "@ai-sdk/groq": "^2.0.29",
         "@ai-sdk/mcp": "^0.0.8",
-        "@ai-sdk/openai": "^2.0.68",
+        "@ai-sdk/openai": "^2.0.69",
         "@ai-sdk/openai-compatible": "^1.0.27",
         "@ai-sdk/xai": "^2.0.33",
         "@modelcontextprotocol/sdk": "^1.22.0",
         "@openrouter/ai-sdk-provider": "^1.2.3",
-        "ai": "^5.0.94",
+        "ai": "^5.0.97",
         "discord.js": "^14.25.0",
+        "remend": "^1.0.1",
         "superjson": "^2.2.5",
         "uploadthing": "^7.7.4",
         "zod": "^4.1.12",
@@ -273,6 +274,8 @@
     "range-parser": ["range-parser@1.2.1", "", {}, "sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg=="],
 
     "raw-body": ["raw-body@3.0.1", "", { "dependencies": { "bytes": "3.1.2", "http-errors": "2.0.0", "iconv-lite": "0.7.0", "unpipe": "1.0.0" } }, "sha512-9G8cA+tuMS75+6G/TzW8OtLzmBDMo8p1JRxN5AZ+LAp8uxGA8V8GZm4GQ4/N5QNQEnLmg6SS7wyuSmbKepiKqA=="],
+
+    "remend": ["remend@1.0.1", "", {}, "sha512-152puVH0qMoRJQFnaMG+rVDdf01Jq/CaED+MBuXExurJgdbkLp0c3TIe4R12o28Klx8uyGsjvFNG05aFG69G9w=="],
 
     "require-from-string": ["require-from-string@2.0.2", "", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
 

@@ -2,6 +2,9 @@
   "name": "js-llmcord",
   "module": "index.ts",
   "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
@@ -19,6 +22,7 @@
     "@openrouter/ai-sdk-provider": "^1.2.3",
     "ai": "^5.0.97",
     "discord.js": "^14.25.0",
+    "remend": "^1.0.1",
     "superjson": "^2.2.5",
     "uploadthing": "^7.7.4",
     "zod": "^4.1.12"

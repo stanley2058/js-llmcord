@@ -56,6 +56,7 @@ import {
 } from "./rag/recommend";
 import { Logger } from "./logger";
 import { setTimeout } from "node:timers/promises";
+import { tokenComplete } from "./token-complete";
 import { randomUUID } from "node:crypto";
 
 const VISION_MODEL_TAGS = [
@@ -661,11 +662,15 @@ export class DiscordOperator {
         const buffer = responseQueue.at(-1) ?? "";
         const tempBuf = buffer.concat(delta);
         const isOverflow = tempBuf.length > maxLength;
-        let currentBuffer = tempBuf.slice(0, maxLength);
+
+        const { completed: currentBuffer, overflow: overflowPrefix } =
+          tokenComplete(tempBuf, maxLength);
+
         const showStreamIndicator = streaming && !isOverflow;
 
         responseQueue[responseQueue.length - 1] = currentBuffer;
-        pushedIndex += currentBuffer.length - buffer.length;
+        const rawContentLength = Math.min(tempBuf.length, maxLength);
+        pushedIndex += rawContentLength - buffer.length;
 
         const emb = warnEmbed
           ? new EmbedBuilder(warnEmbed.toJSON())
@@ -694,7 +699,8 @@ export class DiscordOperator {
           await this.safeEdit(lastMsg, { embeds: [emb] });
         }
 
-        if (isOverflow) responseQueue.push("");
+        // Start next chunk with opening tags for proper markdown continuation
+        if (isOverflow) responseQueue.push(overflowPrefix);
       }
 
       if (!streaming) {
@@ -716,11 +722,14 @@ export class DiscordOperator {
         `[Pusher] BUG: lastMsg === baseMsg but content exists! contentLength=${getContent().length}, pushedIndex=${pushedIndex}, iterations=${loopIterations}. Attempting recovery...`,
       );
 
-      const content = getContent();
+      let remainingContent = getContent();
       const maxLength = getMaxLength(false);
-      // Split content into chunks and send them
-      for (let i = 0; i < content.length; i += maxLength) {
-        const chunk = content.slice(i, i + maxLength);
+      // Split content into chunks with proper markdown completion
+      while (remainingContent.length > 0) {
+        const { completed: chunk, overflow } = tokenComplete(
+          remainingContent,
+          maxLength,
+        );
         const emb = warnEmbed
           ? new EmbedBuilder(warnEmbed.toJSON())
           : new EmbedBuilder();
@@ -733,6 +742,7 @@ export class DiscordOperator {
         });
         discordMessageCreated.push(lastMsg.id);
         responseQueue.push(chunk);
+        remainingContent = overflow;
       }
       this.logger.logInfo(
         `[Pusher] Recovery complete, sent ${discordMessageCreated.length} message(s)`,
