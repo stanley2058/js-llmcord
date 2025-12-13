@@ -1,5 +1,9 @@
 import { describe, it, expect } from "bun:test";
-import { tokenComplete } from "../src/token-complete";
+import {
+  completeMarkdown,
+  tokenComplete,
+  tokenCompleteAt,
+} from "../src/token-complete";
 
 describe("token-complete", () => {
   describe("no splitting needed", () => {
@@ -432,6 +436,25 @@ More details to follow.`;
         const doubleStarCount = (display.match(/\*\*/g) || []).length;
         expect(doubleStarCount % 2).toBe(0);
       }
+    });
+  });
+
+  describe("tokenCompleteAt / completeMarkdown", () => {
+    it("should split at exact position", () => {
+      const result = tokenCompleteAt("hello", 2);
+      expect(result.completed).toBe("he");
+      expect(result.overflow).toBe("llo");
+    });
+
+    it("should close and reopen markdown tags when split", () => {
+      const input = "**bold text**";
+      const result = tokenCompleteAt(input, 8);
+      expect(result.completed).toBe("**bold t**");
+      expect(result.overflow).toBe("**ext**");
+    });
+
+    it("completeMarkdown should close dangling tags", () => {
+      expect(completeMarkdown("*hi")).toBe("*hi*");
     });
   });
 });

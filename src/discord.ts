@@ -56,8 +56,7 @@ import {
 } from "./rag/recommend";
 import { Logger } from "./logger";
 import { setTimeout } from "node:timers/promises";
-import { tokenComplete } from "./token-complete";
-import { findSafeSplitPoint } from "./markdown-splitter";
+import { chunkMarkdownForEmbeds } from "./markdown-chunker";
 import { randomUUID } from "node:crypto";
 
 const VISION_MODEL_TAGS = [
@@ -651,174 +650,108 @@ export class DiscordOperator {
       );
     });
 
-    let lastMsg = baseMsg;
-    let pushedIndex = 0;
+    const chunkMessages: Message[] = [];
     const discordMessageCreated: string[] = [];
-    const responseQueue: string[] = [""];
+
+    // Cache the last embed state we sent, to avoid spamming the Discord API.
+    const sentDescriptions: string[] = [];
+    const sentColors: number[] = [];
+
+    // Last computed display chunks (no indicator).
+    let responseQueue: string[] = [];
+
+    const buildEmbed = (description: string, color: number) => {
+      const emb = warnEmbed
+        ? new EmbedBuilder(warnEmbed.toJSON())
+        : new EmbedBuilder();
+      emb.setDescription(description || "*\<empty_string\>*");
+      emb.setColor(color);
+      return emb;
+    };
+
+    const syncToDiscord = async (content: string): Promise<boolean> => {
+      // Reserve room for the streaming indicator in the last chunk, even after the
+      // stream is done. This keeps message boundaries stable and avoids shrinking.
+      const maxChunkLength = getMaxLength(false);
+      const maxLastChunkLength = getMaxLength(true);
+
+      const displayChunks = chunkMarkdownForEmbeds(content, {
+        maxChunkLength,
+        maxLastChunkLength,
+        useSmartSplitting,
+      });
+
+      responseQueue = displayChunks;
+
+      if (displayChunks.length === 0) {
+        return false;
+      }
+
+      let didUpdate = false;
+
+      for (let i = 0; i < displayChunks.length; i++) {
+        const chunk = displayChunks[i] ?? "";
+        const isLast = i === displayChunks.length - 1;
+        const showStreamIndicator = streaming && isLast;
+        const description = showStreamIndicator
+          ? chunk + STREAMING_INDICATOR
+          : chunk;
+        const color = showStreamIndicator
+          ? EMBED_COLOR_INCOMPLETE
+          : EMBED_COLOR_COMPLETE;
+
+        const emb = buildEmbed(description, color);
+
+        if (i >= chunkMessages.length) {
+          const parent = i === 0 ? baseMsg : chunkMessages[i - 1]!;
+          const msg = await parent.reply({
+            embeds: [emb],
+            allowedMentions: { parse: [], repliedUser: false },
+          });
+
+          chunkMessages.push(msg);
+          discordMessageCreated.push(msg.id);
+          sentDescriptions[i] = description;
+          sentColors[i] = color;
+          didUpdate = true;
+          continue;
+        }
+
+        if (sentDescriptions[i] !== description || sentColors[i] !== color) {
+          await this.safeEdit(chunkMessages[i]!, { embeds: [emb] });
+          sentDescriptions[i] = description;
+          sentColors[i] = color;
+          didUpdate = true;
+        }
+      }
+
+      return didUpdate;
+    };
 
     while (true) {
       loopIterations++;
       const content = getContent();
-      const maxLength = getMaxLength(streaming);
-      const delta = content.slice(pushedIndex);
-      const needsInitialMessage = lastMsg === baseMsg && content.length > 0;
-
-      if (delta.length > 0 || needsInitialMessage) {
-        const buffer = responseQueue.at(-1) ?? "";
-        const tempBuf = buffer.concat(delta);
-        const isOverflow = tempBuf.length > maxLength;
-
-        let displayBuffer: string;
-        let splitPos: number;
-
-        if (useSmartSplitting) {
-          // Smart splitting: use AST to find safe split points
-          // Step 1: Complete markdown with tokenComplete
-          const { completed: completedBuf } = tokenComplete(tempBuf, maxLength);
-
-          // Step 2: If overflow, find safe split point using AST
-          if (isOverflow) {
-            // Find safe split point in the completed content
-            splitPos = findSafeSplitPoint(completedBuf, maxLength);
-            // Re-complete just the safe portion
-            const { completed: safeCompleted } = tokenComplete(
-              tempBuf.slice(0, splitPos),
-              maxLength,
-            );
-            displayBuffer = safeCompleted;
-          } else {
-            splitPos = tempBuf.length;
-            displayBuffer = completedBuf;
-          }
-
-          // Store content up to split point
-          responseQueue[responseQueue.length - 1] = tempBuf.slice(0, splitPos);
-          pushedIndex += splitPos - buffer.length;
-
-          // Start next chunk with opening tags for continuation
-          if (isOverflow) {
-            const overflowContent = tempBuf.slice(splitPos);
-            const fullOverflow = tokenComplete(tempBuf, splitPos).overflow;
-            const openingPrefix = fullOverflow.slice(
-              0,
-              fullOverflow.length - overflowContent.length,
-            );
-            responseQueue.push(openingPrefix);
-          }
-        } else {
-          // Original behavior: simple split at maxLength, no processing
-          displayBuffer = tempBuf.slice(0, maxLength);
-          splitPos = isOverflow ? maxLength : tempBuf.length;
-
-          responseQueue[responseQueue.length - 1] = displayBuffer;
-          pushedIndex += displayBuffer.length - buffer.length;
-
-          if (isOverflow) responseQueue.push("");
-        }
-
-        const showStreamIndicator = streaming && !isOverflow;
-
-        const emb = warnEmbed
-          ? new EmbedBuilder(warnEmbed.toJSON())
-          : new EmbedBuilder();
-        const outputBuffer = showStreamIndicator
-          ? displayBuffer + STREAMING_INDICATOR
-          : displayBuffer;
-        emb.setDescription(outputBuffer || "*\<empty_string\>*");
-        if (!streaming && !outputBuffer) {
-          this.logger.logWarn("stream response is empty");
-        }
-        emb.setColor(
-          showStreamIndicator ? EMBED_COLOR_INCOMPLETE : EMBED_COLOR_COMPLETE,
-        );
-
-        if (
-          discordMessageCreated.length < responseQueue.length ||
-          baseMsg === lastMsg
-        ) {
-          lastMsg = await lastMsg.reply({
-            embeds: [emb],
-            allowedMentions: { parse: [], repliedUser: false },
-          });
-          discordMessageCreated.push(lastMsg.id);
-        } else {
-          await this.safeEdit(lastMsg, { embeds: [emb] });
-        }
-      }
+      const didUpdate = await syncToDiscord(content);
 
       if (!streaming) {
-        if (getContent().length !== pushedIndex) continue;
-        this.logger.logDebug(
-          `[Pusher] exiting loop: iterations=${loopIterations}, pushedIndex=${pushedIndex}, contentLength=${content.length}, messagesCreated=${discordMessageCreated.length}`,
-        );
-        break;
+        // Keep syncing until we observe a stable (fully finalized) state.
+        if (!didUpdate) {
+          this.logger.logDebug(
+            `[Pusher] exiting loop: iterations=${loopIterations}, contentLength=${content.length}, messagesCreated=${discordMessageCreated.length}`,
+          );
+          break;
+        }
+        continue;
       }
+
       await setTimeout(EDIT_DELAY_SECONDS * 1000);
     }
 
-    // Build final display buffers
-    const finalQueue = useSmartSplitting
-      ? responseQueue.map((raw) => tokenComplete(raw, getMaxLength(false)).completed)
-      : responseQueue;
-    const lastChunk = finalQueue.at(-1);
-
-    // Recovery: if pusher loop somehow failed to create any message, flush content now
-    if (lastMsg === baseMsg && getContent().length > 0) {
-      this.logger.logError(
-        `[Pusher] BUG: lastMsg === baseMsg but content exists! contentLength=${getContent().length}, pushedIndex=${pushedIndex}, iterations=${loopIterations}. Attempting recovery...`,
-      );
-
-      let remainingContent = getContent();
-      const maxLength = getMaxLength(false);
-
-      while (remainingContent.length > 0) {
-        let chunk: string;
-
-        if (useSmartSplitting) {
-          // Find safe split point using AST, then complete
-          const splitPos = findSafeSplitPoint(remainingContent, maxLength);
-          const { completed, overflow } = tokenComplete(
-            remainingContent.slice(0, splitPos),
-            maxLength,
-          );
-          chunk = completed;
-          remainingContent = overflow;
-        } else {
-          // Simple split at maxLength, no processing
-          chunk = remainingContent.slice(0, maxLength);
-          remainingContent = remainingContent.slice(maxLength);
-        }
-
-        const emb = warnEmbed
-          ? new EmbedBuilder(warnEmbed.toJSON())
-          : new EmbedBuilder();
-        emb.setDescription(chunk || "*\<empty_string\>*");
-        emb.setColor(EMBED_COLOR_COMPLETE);
-
-        lastMsg = await lastMsg.reply({
-          embeds: [emb],
-          allowedMentions: { parse: [], repliedUser: false },
-        });
-        discordMessageCreated.push(lastMsg.id);
-        finalQueue.push(chunk);
-      }
-      this.logger.logInfo(
-        `[Pusher] Recovery complete, sent ${discordMessageCreated.length} message(s)`,
-      );
-    } else if (lastMsg !== baseMsg && lastChunk) {
-      const emb = warnEmbed
-        ? new EmbedBuilder(warnEmbed.toJSON())
-        : new EmbedBuilder();
-
-      emb.setDescription(lastChunk || "*\<empty_string\>*");
-      emb.setColor(EMBED_COLOR_COMPLETE);
-
-      await this.safeEdit(lastMsg, { embeds: [emb] });
-    }
+    const lastMsg = chunkMessages.at(-1) ?? baseMsg;
 
     return {
       lastMsg,
-      responseQueue: finalQueue,
+      responseQueue,
       discordMessageCreated,
     };
   }

@@ -262,3 +262,33 @@ export function tokenComplete(
     overflow: overflow,
   };
 }
+
+/**
+ * Completes markdown without applying any length-based splitting.
+ */
+export function completeMarkdown(input: string): string {
+  return safeRemend(input);
+}
+
+/**
+ * Force a split at a specific character offset and return:
+ * - `completed`: the first part with any opened tags closed
+ * - `overflow`: the remainder with the required opening tags prepended
+ */
+export function tokenCompleteAt(
+  input: string,
+  splitAt: number,
+): { completed: string; overflow: string } {
+  const clampedSplitAt = Math.max(0, Math.min(splitAt, input.length));
+  const firstPart = input.slice(0, clampedSplitAt);
+  const remainingPart = input.slice(clampedSplitAt);
+
+  const completedFirst = safeRemend(firstPart);
+  const closedTags = detectClosedTags(firstPart, completedFirst);
+  const openingPrefix = buildOpeningPrefix(closedTags, firstPart);
+
+  return {
+    completed: completedFirst,
+    overflow: remainingPart.length > 0 ? openingPrefix + remainingPart : "",
+  };
+}
