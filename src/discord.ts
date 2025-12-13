@@ -666,7 +666,7 @@ export class DiscordOperator {
         const isOverflow = tempBuf.length > maxLength;
 
         // Only use tokenComplete for display purposes, not for buffer storage
-        const { completed: displayBuffer, overflow: overflowPrefix } =
+        const { completed: displayBuffer, overflow: overflowWithContent } =
           tokenComplete(tempBuf, maxLength);
 
         const showStreamIndicator = streaming && !isOverflow;
@@ -703,8 +703,17 @@ export class DiscordOperator {
           await this.safeEdit(lastMsg, { embeds: [emb] });
         }
 
-        // Start next chunk with opening tags for proper markdown continuation
-        if (isOverflow) rawBuffers.push(overflowPrefix);
+        // Start next chunk with ONLY the opening tags (not the overflow content)
+        // The overflow content is already tracked by pushedIndex
+        if (isOverflow) {
+          const overflowContent = tempBuf.slice(maxLength);
+          // Extract just the opening prefix by removing the actual overflow content
+          const openingPrefix = overflowWithContent.slice(
+            0,
+            overflowWithContent.length - overflowContent.length,
+          );
+          rawBuffers.push(openingPrefix);
+        }
       }
 
       if (!streaming) {
