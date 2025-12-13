@@ -126,10 +126,33 @@ function restoreCodeBlocks(
  * remend doesn't understand that asterisks inside backticks should be ignored,
  * so we temporarily replace code blocks with placeholders before processing.
  */
+function closeUnclosedCodeFences(text: string): string {
+  // Discord requires fenced code blocks to be explicitly closed to render.
+  // `remend` doesn't reliably close fences, so we do a minimal line-based pass.
+  const lines = text.split("\n");
+  let inFence = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("```")) continue;
+
+    // Toggle fence state on each fence marker line.
+    inFence = !inFence;
+  }
+
+  if (!inFence) return text;
+
+  let out = text;
+  if (!out.endsWith("\n")) out += "\n";
+  out += "```";
+  return out;
+}
+
 function safeRemend(text: string): string {
   const { escaped, codeBlocks } = escapeCodeBlocks(text);
   const completed = remend(escaped);
-  return restoreCodeBlocks(completed, codeBlocks);
+  const restored = restoreCodeBlocks(completed, codeBlocks);
+  return closeUnclosedCodeFences(restored);
 }
 
 /**

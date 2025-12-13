@@ -693,9 +693,26 @@ export class DiscordOperator {
         const chunk = displayChunks[i] ?? "";
         const isLast = i === displayChunks.length - 1;
         const showStreamIndicator = streaming && isLast;
-        const description = showStreamIndicator
-          ? chunk + STREAMING_INDICATOR
-          : chunk;
+
+        const description = (() => {
+          if (!showStreamIndicator) return chunk;
+
+          // If the chunk ends with a block-closing marker, keep that marker intact
+          // on its own line (e.g. ``` or $$) so the block still renders.
+          const lines = chunk.split("\n");
+          for (let j = lines.length - 1; j >= 0; j--) {
+            const trimmed = (lines[j] ?? "").trim();
+            if (trimmed.length === 0) continue;
+
+            if (trimmed === "```" || trimmed === "$$") {
+              // Keep indicator length stable ("\n⚪" vs " ⚪").
+              return chunk + "\n" + STREAMING_INDICATOR.trimStart();
+            }
+            break;
+          }
+
+          return chunk + STREAMING_INDICATOR;
+        })();
         const color = showStreamIndicator
           ? EMBED_COLOR_INCOMPLETE
           : EMBED_COLOR_COMPLETE;

@@ -77,14 +77,11 @@ describe("token-complete", () => {
   });
 
   describe("code blocks (```)", () => {
-    // Note: remend does NOT close code blocks with newlines (by design for streaming)
-    // So we test inline code block behavior instead
-    it("should handle inline code block (no newline)", () => {
-      const input = "```code```";
-      const result = tokenComplete(input, 6);
-      // "```cod" doesn't get closed by remend as it's not a complete pattern
-      expect(result.completed).toBe("```cod");
-      expect(result.overflow).toBe("e```");
+    it("should close and reopen code fence when split", () => {
+      const input = "```js\nhello world\n```";
+      const result = tokenComplete(input, 8);
+      expect(result.completed).toBe("```js\nhe\n```");
+      expect(result.overflow).toBe("```js\nllo world\n```");
     });
   });
 
@@ -170,11 +167,10 @@ describe("token-complete", () => {
       expect(result.completed).toBe("`a * b`");
     });
 
-    it("should handle unclosed code fence with asterisks", () => {
+    it("should close unclosed code fence with asterisks", () => {
       const input = "```js\nconst x = 5 *";
       const result = tokenComplete(input, 100);
-      // remend doesn't close code fences, content preserved as-is
-      expect(result.completed).toBe(input);
+      expect(result.completed).toBe("```js\nconst x = 5 *\n```");
     });
   });
 
@@ -455,6 +451,18 @@ More details to follow.`;
 
     it("completeMarkdown should close dangling tags", () => {
       expect(completeMarkdown("*hi")).toBe("*hi*");
+    });
+
+    it("completeMarkdown should close unclosed code fences", () => {
+      const input = "text\n```javascript\nconsole.log(1)\n";
+      expect(completeMarkdown(input)).toBe(
+        "text\n```javascript\nconsole.log(1)\n```",
+      );
+    });
+
+    it("completeMarkdown should close fences even without trailing newline", () => {
+      const input = "text\n```js\nconsole.log(1)";
+      expect(completeMarkdown(input)).toBe("text\n```js\nconsole.log(1)\n```");
     });
   });
 });
