@@ -57,6 +57,7 @@ import {
 import { Logger } from "./logger";
 import { setTimeout } from "node:timers/promises";
 import { tokenComplete } from "./token-complete";
+import { findSafeSplitPoint } from "./markdown-splitter";
 import { randomUUID } from "node:crypto";
 
 const VISION_MODEL_TAGS = [
@@ -77,6 +78,8 @@ const VISION_MODEL_TAGS = [
 
 const STREAMING_INDICATOR = " ⚪";
 const EDIT_DELAY_SECONDS = 0.1;
+// Buffer for potential closing tags when splitting markdown (worst case: **~~*` needs `*~~**)
+const CLOSING_TAG_BUFFER = 10;
 
 const EMBED_COLOR_COMPLETE = Colors.Blue;
 const EMBED_COLOR_INCOMPLETE = Colors.Yellow;
@@ -630,12 +633,14 @@ export class DiscordOperator {
     getMaxLength,
     streamDone,
     warnEmbed,
+    useSmartSplitting,
   }: {
     baseMsg: Message;
     getContent: () => string;
     getMaxLength: (isStreaming: boolean) => number;
     streamDone: Promise<void>;
     warnEmbed: EmbedBuilder | null;
+    useSmartSplitting: boolean;
   }) {
     let streaming = true;
     let loopIterations = 0;
@@ -649,9 +654,7 @@ export class DiscordOperator {
     let lastMsg = baseMsg;
     let pushedIndex = 0;
     const discordMessageCreated: string[] = [];
-    // rawBuffers stores actual content without auto-closed tags
-    // We only apply tokenComplete for display, not for accumulation
-    const rawBuffers: string[] = [""];
+    const responseQueue: string[] = [""];
 
     while (true) {
       loopIterations++;
@@ -661,20 +664,59 @@ export class DiscordOperator {
       const needsInitialMessage = lastMsg === baseMsg && content.length > 0;
 
       if (delta.length > 0 || needsInitialMessage) {
-        const rawBuffer = rawBuffers.at(-1) ?? "";
-        const tempBuf = rawBuffer.concat(delta);
+        const buffer = responseQueue.at(-1) ?? "";
+        const tempBuf = buffer.concat(delta);
         const isOverflow = tempBuf.length > maxLength;
 
-        // Only use tokenComplete for display purposes, not for buffer storage
-        const { completed: displayBuffer, overflow: overflowWithContent } =
-          tokenComplete(tempBuf, maxLength);
+        let displayBuffer: string;
+        let splitPos: number;
+
+        if (useSmartSplitting) {
+          // Smart splitting: use AST to find safe split points
+          // Step 1: Complete markdown with tokenComplete
+          const { completed: completedBuf } = tokenComplete(tempBuf, maxLength);
+
+          // Step 2: If overflow, find safe split point using AST
+          if (isOverflow) {
+            // Find safe split point in the completed content
+            splitPos = findSafeSplitPoint(completedBuf, maxLength);
+            // Re-complete just the safe portion
+            const { completed: safeCompleted } = tokenComplete(
+              tempBuf.slice(0, splitPos),
+              maxLength,
+            );
+            displayBuffer = safeCompleted;
+          } else {
+            splitPos = tempBuf.length;
+            displayBuffer = completedBuf;
+          }
+
+          // Store content up to split point
+          responseQueue[responseQueue.length - 1] = tempBuf.slice(0, splitPos);
+          pushedIndex += splitPos - buffer.length;
+
+          // Start next chunk with opening tags for continuation
+          if (isOverflow) {
+            const overflowContent = tempBuf.slice(splitPos);
+            const fullOverflow = tokenComplete(tempBuf, splitPos).overflow;
+            const openingPrefix = fullOverflow.slice(
+              0,
+              fullOverflow.length - overflowContent.length,
+            );
+            responseQueue.push(openingPrefix);
+          }
+        } else {
+          // Original behavior: simple split at maxLength, no processing
+          displayBuffer = tempBuf.slice(0, maxLength);
+          splitPos = isOverflow ? maxLength : tempBuf.length;
+
+          responseQueue[responseQueue.length - 1] = displayBuffer;
+          pushedIndex += displayBuffer.length - buffer.length;
+
+          if (isOverflow) responseQueue.push("");
+        }
 
         const showStreamIndicator = streaming && !isOverflow;
-
-        // Store raw content (up to maxLength) without auto-closed tags
-        const rawContentForThisChunk = tempBuf.slice(0, maxLength);
-        rawBuffers[rawBuffers.length - 1] = rawContentForThisChunk;
-        pushedIndex += rawContentForThisChunk.length - rawBuffer.length;
 
         const emb = warnEmbed
           ? new EmbedBuilder(warnEmbed.toJSON())
@@ -691,7 +733,7 @@ export class DiscordOperator {
         );
 
         if (
-          discordMessageCreated.length < rawBuffers.length ||
+          discordMessageCreated.length < responseQueue.length ||
           baseMsg === lastMsg
         ) {
           lastMsg = await lastMsg.reply({
@@ -701,18 +743,6 @@ export class DiscordOperator {
           discordMessageCreated.push(lastMsg.id);
         } else {
           await this.safeEdit(lastMsg, { embeds: [emb] });
-        }
-
-        // Start next chunk with ONLY the opening tags (not the overflow content)
-        // The overflow content is already tracked by pushedIndex
-        if (isOverflow) {
-          const overflowContent = tempBuf.slice(maxLength);
-          // Extract just the opening prefix by removing the actual overflow content
-          const openingPrefix = overflowWithContent.slice(
-            0,
-            overflowWithContent.length - overflowContent.length,
-          );
-          rawBuffers.push(openingPrefix);
         }
       }
 
@@ -726,11 +756,11 @@ export class DiscordOperator {
       await setTimeout(EDIT_DELAY_SECONDS * 1000);
     }
 
-    // Build final completed buffers for display (apply tokenComplete to close any open tags)
-    const responseQueue = rawBuffers.map(
-      (raw) => tokenComplete(raw, getMaxLength(false)).completed,
-    );
-    const lastChunk = responseQueue.at(-1);
+    // Build final display buffers
+    const finalQueue = useSmartSplitting
+      ? responseQueue.map((raw) => tokenComplete(raw, getMaxLength(false)).completed)
+      : responseQueue;
+    const lastChunk = finalQueue.at(-1);
 
     // Recovery: if pusher loop somehow failed to create any message, flush content now
     if (lastMsg === baseMsg && getContent().length > 0) {
@@ -740,12 +770,25 @@ export class DiscordOperator {
 
       let remainingContent = getContent();
       const maxLength = getMaxLength(false);
-      // Split content into chunks with proper markdown completion
+
       while (remainingContent.length > 0) {
-        const { completed: chunk, overflow } = tokenComplete(
-          remainingContent,
-          maxLength,
-        );
+        let chunk: string;
+
+        if (useSmartSplitting) {
+          // Find safe split point using AST, then complete
+          const splitPos = findSafeSplitPoint(remainingContent, maxLength);
+          const { completed, overflow } = tokenComplete(
+            remainingContent.slice(0, splitPos),
+            maxLength,
+          );
+          chunk = completed;
+          remainingContent = overflow;
+        } else {
+          // Simple split at maxLength, no processing
+          chunk = remainingContent.slice(0, maxLength);
+          remainingContent = remainingContent.slice(maxLength);
+        }
+
         const emb = warnEmbed
           ? new EmbedBuilder(warnEmbed.toJSON())
           : new EmbedBuilder();
@@ -757,8 +800,7 @@ export class DiscordOperator {
           allowedMentions: { parse: [], repliedUser: false },
         });
         discordMessageCreated.push(lastMsg.id);
-        responseQueue.push(chunk);
-        remainingContent = overflow;
+        finalQueue.push(chunk);
       }
       this.logger.logInfo(
         `[Pusher] Recovery complete, sent ${discordMessageCreated.length} message(s)`,
@@ -776,7 +818,7 @@ export class DiscordOperator {
 
     return {
       lastMsg,
-      responseQueue,
+      responseQueue: finalQueue,
       discordMessageCreated,
     };
   }
@@ -831,6 +873,8 @@ export class DiscordOperator {
           })();
         });
 
+        const useSmartSplitting =
+          this.cachedConfig.experimental_markdown_splitting ?? false;
         const pusherPromise = this.startContentPusher({
           baseMsg: msg,
           getContent: () => contentAcc,
@@ -838,10 +882,13 @@ export class DiscordOperator {
             usePlainResponses
               ? 4000
               : isStreaming
-                ? 4096 - STREAMING_INDICATOR.length
-                : 4096,
+                ? 4096 -
+                  STREAMING_INDICATOR.length -
+                  (useSmartSplitting ? CLOSING_TAG_BUFFER : 0)
+                : 4096 - (useSmartSplitting ? CLOSING_TAG_BUFFER : 0),
           streamDone: streamingDonePromise,
           warnEmbed,
+          useSmartSplitting,
         });
 
         await streamingDonePromise;

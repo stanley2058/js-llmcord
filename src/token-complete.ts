@@ -4,46 +4,72 @@ import remend from "remend";
 const CODE_PLACEHOLDER = "\x00";
 
 /**
- * Escapes the CONTENT of code blocks before processing with remend.
+ * Escapes code blocks before processing with remend.
  * This prevents remend from incorrectly interpreting asterisks inside code
  * as markdown formatting (e.g., `response.*` would otherwise get an extra `*`).
  *
- * We keep the backticks visible to remend so it can still close unclosed
- * code blocks during streaming - we only hide the content inside.
- *
- * Handles both closed code blocks (`code`) and unclosed ones (`code...) that
- * may appear during streaming.
+ * Strategy:
+ * - Closed code blocks: completely replace with placeholders (content hidden from remend)
+ * - Unclosed code blocks: keep the opening marker visible so remend can close it,
+ *   but hide the content
  */
 function escapeCodeBlocks(text: string): {
   escaped: string;
-  codeBlocks: string[];
+  codeBlocks: Array<{
+    type: "fence" | "inline";
+    content: string;
+    lang: string;
+    closed: boolean;
+  }>;
 } {
-  const codeBlocks: string[] = [];
+  const codeBlocks: Array<{
+    type: "fence" | "inline";
+    content: string;
+    lang: string;
+    closed: boolean;
+  }> = [];
 
   let result = text;
 
   // First handle triple backticks (code fences) - both closed and unclosed
-  // We preserve the ``` delimiters but escape the content between them
-  // Closed: ```content``` -> ```PLACEHOLDER```
-  // Unclosed: ```content -> ```PLACEHOLDER (remend will add closing ```)
-  result = result.replace(/```([\s\S]*?)(```|$)/g, (match, content, closing) => {
-    if (content) {
+  // Regex captures: optional language, optional newline, content, optional closing ```
+  result = result.replace(
+    /```(\w*)(\n?)([\s\S]*?)(```|$)/g,
+    (match, lang, newline, content, closing) => {
       const idx = codeBlocks.length;
-      codeBlocks.push(content);
-      return `\`\`\`${CODE_PLACEHOLDER}CODE${idx}${CODE_PLACEHOLDER}${closing}`;
-    }
-    return match;
-  });
+      const isClosed = closing === "```";
+      codeBlocks.push({
+        type: "fence",
+        content,
+        lang: lang || "",
+        closed: isClosed,
+      });
+
+      if (isClosed) {
+        // Closed: completely replace with placeholder (no backticks visible)
+        return `${CODE_PLACEHOLDER}FENCE${idx}${CODE_PLACEHOLDER}`;
+      } else {
+        // Unclosed: keep ``` visible so remend can close it, hide content
+        // Preserve original newline (or lack thereof) after language
+        return `\`\`\`${lang}${newline}${CODE_PLACEHOLDER}FENCECONTENT${idx}${CODE_PLACEHOLDER}`;
+      }
+    },
+  );
 
   // Then handle inline code (single backticks) - both closed and unclosed
-  // Preserve the ` delimiters but escape the content
-  // Closed: `content` -> `PLACEHOLDER`
-  // Unclosed: `content -> `PLACEHOLDER (remend will add closing `)
-  // Note: [^`\x00]+ excludes null char to avoid matching our placeholders
+  // Now safe because all ``` are replaced with placeholders
   result = result.replace(/`([^`\x00]+)(`|$)/g, (match, content, closing) => {
     const idx = codeBlocks.length;
-    codeBlocks.push(content);
-    return `\`${CODE_PLACEHOLDER}CODE${idx}${CODE_PLACEHOLDER}${closing}`;
+    const isClosed = closing === "`";
+    codeBlocks.push({ type: "inline", content, lang: "", closed: isClosed });
+
+    if (isClosed) {
+      // Closed: completely replace with placeholder
+      return `${CODE_PLACEHOLDER}INLINE${idx}${CODE_PLACEHOLDER}`;
+    } else {
+      // Unclosed: keep ` visible so remend can close it, hide content
+      return `\`${CODE_PLACEHOLDER}INLINECONTENT${idx}${CODE_PLACEHOLDER}`;
+    }
   });
 
   return { escaped: result, codeBlocks };
@@ -51,13 +77,46 @@ function escapeCodeBlocks(text: string): {
 
 /**
  * Restores code blocks from placeholders after remend processing.
+ * Reconstructs the original markdown syntax including backticks.
  */
-function restoreCodeBlocks(text: string, codeBlocks: string[]): string {
+function restoreCodeBlocks(
+  text: string,
+  codeBlocks: Array<{
+    type: "fence" | "inline";
+    content: string;
+    lang: string;
+    closed: boolean;
+  }>,
+): string {
   let result = text;
   for (let i = 0; i < codeBlocks.length; i++) {
-    const placeholder = `${CODE_PLACEHOLDER}CODE${i}${CODE_PLACEHOLDER}`;
-    const original = codeBlocks[i] ?? "";
-    result = result.replace(placeholder, original);
+    const block = codeBlocks[i];
+    if (!block) continue;
+
+    if (block.type === "fence") {
+      if (block.closed) {
+        // Was completely replaced
+        const placeholder = `${CODE_PLACEHOLDER}FENCE${i}${CODE_PLACEHOLDER}`;
+        const langPart = block.lang ? block.lang + "\n" : "";
+        const restored = "```" + langPart + block.content + "```";
+        result = result.replace(placeholder, restored);
+      } else {
+        // Only content was replaced, ``` markers kept visible
+        const placeholder = `${CODE_PLACEHOLDER}FENCECONTENT${i}${CODE_PLACEHOLDER}`;
+        result = result.replace(placeholder, block.content);
+      }
+    } else {
+      if (block.closed) {
+        // Was completely replaced
+        const placeholder = `${CODE_PLACEHOLDER}INLINE${i}${CODE_PLACEHOLDER}`;
+        const restored = "`" + block.content + "`";
+        result = result.replace(placeholder, restored);
+      } else {
+        // Only content was replaced, ` marker kept visible
+        const placeholder = `${CODE_PLACEHOLDER}INLINECONTENT${i}${CODE_PLACEHOLDER}`;
+        result = result.replace(placeholder, block.content);
+      }
+    }
   }
   return result;
 }

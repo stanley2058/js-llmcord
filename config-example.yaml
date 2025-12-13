@@ -16,6 +16,11 @@ allow_dms: true
 debug_message: false
 log_level: info # debug, info, warn, error
 
+# Experimental: Use AST-based markdown splitting to avoid breaking syntax
+# when messages exceed Discord's 4096 character limit. When enabled, splits
+# will avoid breaking **bold**, *italic*, `code`, links, etc.
+experimental_markdown_splitting: false
+
 permissions:
   users:
     admin_ids: ["123456789"]
