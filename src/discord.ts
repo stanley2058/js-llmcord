@@ -717,7 +717,7 @@ export class DiscordOperator {
       await setTimeout(EDIT_DELAY_SECONDS * 1000);
     }
 
-    // Build final completed buffers for display (apply tokenComplete only at the end)
+    // Build final completed buffers for display (apply tokenComplete to close any open tags)
     const responseQueue = rawBuffers.map(
       (raw) => tokenComplete(raw, getMaxLength(false)).completed,
     );

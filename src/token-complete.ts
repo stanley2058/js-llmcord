@@ -1,5 +1,78 @@
 import remend from "remend";
 
+// Null character used as placeholder delimiter (won't appear in normal text)
+const CODE_PLACEHOLDER = "\x00";
+
+/**
+ * Escapes the CONTENT of code blocks before processing with remend.
+ * This prevents remend from incorrectly interpreting asterisks inside code
+ * as markdown formatting (e.g., `response.*` would otherwise get an extra `*`).
+ *
+ * We keep the backticks visible to remend so it can still close unclosed
+ * code blocks during streaming - we only hide the content inside.
+ *
+ * Handles both closed code blocks (`code`) and unclosed ones (`code...) that
+ * may appear during streaming.
+ */
+function escapeCodeBlocks(text: string): {
+  escaped: string;
+  codeBlocks: string[];
+} {
+  const codeBlocks: string[] = [];
+
+  let result = text;
+
+  // First handle triple backticks (code fences) - both closed and unclosed
+  // We preserve the ``` delimiters but escape the content between them
+  // Closed: ```content``` -> ```PLACEHOLDER```
+  // Unclosed: ```content -> ```PLACEHOLDER (remend will add closing ```)
+  result = result.replace(/```([\s\S]*?)(```|$)/g, (match, content, closing) => {
+    if (content) {
+      const idx = codeBlocks.length;
+      codeBlocks.push(content);
+      return `\`\`\`${CODE_PLACEHOLDER}CODE${idx}${CODE_PLACEHOLDER}${closing}`;
+    }
+    return match;
+  });
+
+  // Then handle inline code (single backticks) - both closed and unclosed
+  // Preserve the ` delimiters but escape the content
+  // Closed: `content` -> `PLACEHOLDER`
+  // Unclosed: `content -> `PLACEHOLDER (remend will add closing `)
+  // Note: [^`\x00]+ excludes null char to avoid matching our placeholders
+  result = result.replace(/`([^`\x00]+)(`|$)/g, (match, content, closing) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(content);
+    return `\`${CODE_PLACEHOLDER}CODE${idx}${CODE_PLACEHOLDER}${closing}`;
+  });
+
+  return { escaped: result, codeBlocks };
+}
+
+/**
+ * Restores code blocks from placeholders after remend processing.
+ */
+function restoreCodeBlocks(text: string, codeBlocks: string[]): string {
+  let result = text;
+  for (let i = 0; i < codeBlocks.length; i++) {
+    const placeholder = `${CODE_PLACEHOLDER}CODE${i}${CODE_PLACEHOLDER}`;
+    const original = codeBlocks[i] ?? "";
+    result = result.replace(placeholder, original);
+  }
+  return result;
+}
+
+/**
+ * Wrapper around remend that properly handles code blocks.
+ * remend doesn't understand that asterisks inside backticks should be ignored,
+ * so we temporarily replace code blocks with placeholders before processing.
+ */
+function safeRemend(text: string): string {
+  const { escaped, codeBlocks } = escapeCodeBlocks(text);
+  const completed = remend(escaped);
+  return restoreCodeBlocks(completed, codeBlocks);
+}
+
 /**
  * Detects which markdown tags were auto-closed by remend by comparing
  * the original input with the completed output.
@@ -97,8 +170,9 @@ export function tokenComplete(
   input: string,
   maxOutput: number,
 ): { completed: string; overflow: string } {
-  // Always use remend to ensure valid markdown for streaming
-  const completed = remend(input);
+  // Use safeRemend to ensure valid markdown for streaming
+  // (safeRemend protects code blocks from incorrect asterisk handling)
+  const completed = safeRemend(input);
 
   // If input fits within limit, no splitting needed
   if (completed.length <= maxOutput) {
@@ -112,8 +186,8 @@ export function tokenComplete(
   const firstPart = input.slice(0, maxOutput);
   const remainingPart = input.slice(maxOutput);
 
-  // Use remend to close any open tags in the first part
-  const completedFirst = remend(firstPart);
+  // Use safeRemend to close any open tags in the first part
+  const completedFirst = safeRemend(firstPart);
 
   // Detect what tags were closed
   const closedTags = detectClosedTags(firstPart, completedFirst);
