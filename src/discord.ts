@@ -824,7 +824,7 @@ export class DiscordOperator {
         });
 
         const useSmartSplitting =
-          this.cachedConfig.experimental_markdown_splitting ?? false;
+          this.cachedConfig.experimental_overflow_splitting ?? false;
         const pusherPromise = this.startContentPusher({
           baseMsg: msg,
           getContent: () => contentAcc,

@@ -217,12 +217,15 @@ function detectClosedTags(original: string, completed: string): string[] {
  * to properly reopen them.
  */
 function findCodeBlockLanguage(text: string): string {
-  // Find the last unclosed ``` and check if it has a language
-  const matches = text.match(/```(\w*)\n?[^`]*$/);
-  if (matches) {
-    return matches[1] || "";
-  }
-  return "";
+  // Find the last fence opener and capture the language (if any).
+  // This is used to reopen a block after splitting.
+  //
+  // We *do not* require the opener to be at the very end of the string,
+  // because splits can happen inside the fenced block.
+  const matches = text.match(/```([^\n]*)\n[\s\S]*$/);
+  if (!matches) return "";
+
+  return (matches[1] || "").trim();
 }
 
 /**

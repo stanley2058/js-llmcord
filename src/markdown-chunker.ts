@@ -1,4 +1,4 @@
-import { findSafeSplitPoint } from "./markdown-splitter";
+import { findLexicalSafeSplitPoint } from "./markdown-splitter";
 import { completeMarkdown, tokenCompleteAt } from "./token-complete";
 
 export interface ChunkMarkdownOptions {
@@ -57,15 +57,55 @@ function chunkRaw(
     // Only consider a stable "window" of size maxChunkLength.
     // tokenCompleteAt closes tags for that window without looking ahead.
     const completedWindow = tokenCompleteAt(remaining, maxChunkLength).completed;
-    let splitPos = findSafeSplitPoint(completedWindow, maxChunkLength);
+    let splitPos = findLexicalSafeSplitPoint(completedWindow, maxChunkLength, {
+      // Keep the heuristic window small so chunk boundaries remain stable.
+      maxBacktrack: 100,
+      newlineBacktrack: 100,
+      locale: "en-US",
+    });
 
     // Ensure forward progress even in pathological markdown.
     splitPos = Math.max(1, Math.min(splitPos, maxChunkLength));
 
-    const { completed, overflow } = tokenCompleteAt(remaining, splitPos);
-    rawChunks.push(remaining.slice(0, splitPos));
-    displayChunks.push(completed);
-    remaining = overflow;
+    // `tokenCompleteAt` may close and then reopen blocks (notably code fences).
+    // In some cases (e.g. splitting right after a fence opener), the overflow can
+    // end up identical to the input and we'd loop forever. Guarantee progress.
+    let attemptSplitPos = splitPos;
+    let completed = "";
+    let overflow = "";
+    let nextRemaining = "";
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      ({ completed, overflow } = tokenCompleteAt(remaining, attemptSplitPos));
+
+      const isFencedCodeChunk = /^```/m.test(completed);
+      nextRemaining = isFencedCodeChunk ? overflow : overflow.replace(/^[\s\n]+/u, "");
+
+      if (nextRemaining.length < remaining.length) {
+        break;
+      }
+
+      if (attemptSplitPos >= maxChunkLength) {
+        break;
+      }
+
+      attemptSplitPos = Math.min(maxChunkLength, attemptSplitPos + 1);
+    }
+
+    // When splitting at a lexical boundary, drop trailing whitespace/newlines
+    // from the visible chunk. On Discord, message boundaries are visually far
+    // apart, and preserving boundary whitespace is more distracting than helpful.
+    // Avoid trimming whitespace inside fenced code blocks: indentation and
+    // newlines are semantically meaningful in code.
+    const isFencedCodeChunk = /^```/m.test(completed);
+    const trimmedCompleted = isFencedCodeChunk
+      ? completed
+      : completed.replace(/[\s\n]+$/u, "");
+
+    rawChunks.push(remaining.slice(0, attemptSplitPos));
+    displayChunks.push(trimmedCompleted);
+
+    remaining = nextRemaining;
   }
 
   return { rawChunks, displayChunks };

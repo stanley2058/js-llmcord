@@ -12,7 +12,7 @@ export type Config = {
   use_plain_responses?: boolean;
   allow_dms?: boolean;
   debug_message?: boolean;
-  experimental_markdown_splitting?: boolean;
+  experimental_overflow_splitting?: boolean;
   permissions: {
     users: {
       admin_ids: Array<string | number>;

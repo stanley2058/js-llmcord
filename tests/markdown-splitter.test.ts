@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { findSafeSplitPoint } from "../src/markdown-splitter";
+import { findLexicalSafeSplitPoint, findSafeSplitPoint } from "../src/markdown-splitter";
 import { tokenComplete } from "../src/token-complete";
 
 describe("markdown-splitter", () => {
@@ -24,11 +24,11 @@ describe("markdown-splitter", () => {
       expect(result).toBe(10);
     });
 
-    it("should not split inside code fence", () => {
+    it("should allow splitting inside code fence content", () => {
       const input = "Text\n```js\ncode here\n```\nMore";
-      // Position 15 is inside code block
+      // Position 15 is inside code block content; safe splitting is allowed.
       const result = findSafeSplitPoint(input, 15);
-      expect(result).toBeLessThanOrEqual(5); // At or before the code block (5 is the \n)
+      expect(result).toBe(15);
     });
 
     it("should not split inside link syntax", () => {
@@ -47,6 +47,17 @@ describe("markdown-splitter", () => {
   });
 
   describe("integration: findSafeSplitPoint + tokenComplete", () => {
+    it("findLexicalSafeSplitPoint should prefer whitespace", () => {
+      const input = "This is a sentence";
+      const splitPos = findLexicalSafeSplitPoint(input, 12, {
+        maxBacktrack: 100,
+        newlineBacktrack: 100,
+        locale: "en-US",
+      });
+      // "This is a " ends at 10.
+      expect(splitPos).toBe(10);
+    });
+
     it("should produce valid chunks when combined", () => {
       const input = "Hello **bold prediction** and more text here.";
       const maxLen = 15;
