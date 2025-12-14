@@ -60,6 +60,23 @@ export type ProviderConfig = Record<string, string> & {
 
 export type ModelConfig = Record<string, unknown> & {
   use_tools?: boolean; // default to true if tools are configured
+
+  /** Enables Anthropic prompt caching breakpoints. */
+  anthropic_cache_control?: boolean;
+  /** Optional Anthropic prompt cache TTL (e.g. "1h"). */
+  anthropic_cache_ttl?: string;
+  /**
+   * Controls whether tool definitions get Anthropic cacheControl.
+   * Default: false.
+   */
+  anthropic_cache_tools?: boolean;
+
+  /**
+   * AI Gateway upstream preference order for Anthropic models.
+   * Default: ["anthropic", "vertex", "bedrock"].
+   * If set to an empty array, the server will refuse to continue.
+   */
+  ai_gateway_order?: Array<"anthropic" | "bedrock" | "vertex">;
 };
 
 export type LocalMCPConfig = {

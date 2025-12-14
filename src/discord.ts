@@ -59,6 +59,13 @@ import { Logger } from "./logger";
 import { setTimeout } from "node:timers/promises";
 import { chunkMarkdownForEmbeds } from "./markdown-chunker";
 import { randomUUID } from "node:crypto";
+import {
+  getAiGatewayOrderFromModelConfig,
+  getAnthropicCacheControlFromModelConfig,
+  mergeProviderOptions,
+  withAnthropicSystemMessageCacheControl,
+  withAnthropicToolCacheControl,
+} from "./utils/anthropic-cache";
 
 const VISION_MODEL_TAGS = [
   "claude",
@@ -480,7 +487,7 @@ export class DiscordOperator {
     if (!prepared) return false;
     const { modelInstance, isAnthropic, provider, gatewayAdapter } = prepared;
 
-    const { messages, userWarnings, currentMessageImageIds } =
+    let { messages, userWarnings, currentMessageImageIds } =
       await this.buildMessages(msg);
 
     const usePlainResponses = this.cachedConfig.use_plain_responses ?? false;
@@ -499,6 +506,9 @@ export class DiscordOperator {
     const {
       tools: useTools,
       anthropic_cache_control,
+      anthropic_cache_ttl,
+      anthropic_cache_tools,
+      ai_gateway_order,
       temperature,
       max_tokens,
       top_p,
@@ -507,30 +517,52 @@ export class DiscordOperator {
     } = params ?? {};
     const toolsDisabledForModel = useTools === false;
     const useCompatibleTools = useTools === "compatible";
-    const restPart = params
-      ? {
-          providerOptions: {
-            [gatewayAdapter ?? provider]: keysToCamel(rest),
-          },
-        }
-      : {};
 
-    const tools = toolsDisabledForModel
+    const anthropicCacheControl =
+      isAnthropic && anthropic_cache_control
+        ? getAnthropicCacheControlFromModelConfig({
+            anthropic_cache_control,
+            anthropic_cache_ttl,
+          })
+        : null;
+
+    const gatewayOrder =
+      provider === "ai-gateway" && isAnthropic
+        ? getAiGatewayOrderFromModelConfig({ ai_gateway_order })
+        : null;
+
+    const configProviderKey = gatewayAdapter ?? provider;
+    const configProviderOptions = keysToCamel(rest) as Record<string, unknown>;
+
+    const providerOptions = mergeProviderOptions(
+      params
+        ? {
+            [configProviderKey]: configProviderOptions,
+          }
+        : undefined,
+      provider === "ai-gateway" && gatewayOrder
+        ? { gateway: { order: gatewayOrder } }
+        : undefined,
+    ) as StreamTextParams["providerOptions"];
+
+    const restPart = providerOptions ? ({ providerOptions } as const) : {};
+
+    let tools = toolsDisabledForModel
       ? undefined
       : await this.toolManager.getTools();
 
-    if (isAnthropic && anthropic_cache_control) {
+    if (anthropicCacheControl) {
       this.logger.logDebug(
-        "Patching system message for Anthropic API with cache enabled",
+        "Patching system messages for Anthropic cache control",
       );
-      for (const msg of messages) {
-        if (msg.role !== "system") continue;
-        msg.providerOptions = {
-          ...msg.providerOptions,
-          anthropic: {
-            cacheControl: { type: "ephemeral" },
-          },
-        };
+      messages = withAnthropicSystemMessageCacheControl(
+        messages,
+        anthropicCacheControl,
+      );
+
+      if (anthropic_cache_tools === true) {
+        this.logger.logDebug("Patching tools for Anthropic cache control");
+        tools = withAnthropicToolCacheControl(tools, anthropicCacheControl);
       }
     }
 
@@ -581,6 +613,7 @@ export class DiscordOperator {
       compatibleMode: Boolean(tools && useCompatibleTools),
       usePlainResponses,
       warnEmbed,
+      anthropicCacheControl,
     };
   }
 
@@ -785,6 +818,7 @@ export class DiscordOperator {
       compatibleMode,
       usePlainResponses,
       warnEmbed,
+      anthropicCacheControl,
     } = options;
 
     const typingInterval = setInterval(() => this.sendTyping(msg), 1000 * 5);
@@ -807,7 +841,11 @@ export class DiscordOperator {
 
       const generateStream = async () => {
         const stream = compatibleMode
-          ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
+          ? streamTextWithCompatibleTools({
+              ...opts,
+              logger: this.logger,
+              anthropicCacheControl,
+            })
           : streamText({
               ...opts,
               onStepFinish: (step) => {

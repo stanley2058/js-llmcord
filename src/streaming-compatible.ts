@@ -8,7 +8,14 @@ import {
   type ReasoningOutput,
   type ToolResultPart,
 } from "ai";
+
 import type { ILogger } from "./logger";
+import type { AnthropicCacheControl } from "./utils/anthropic-cache";
+import {
+  insertSystemMessageAfterLastSystem,
+  validateAnthropicCacheControlCoverage,
+  withAnthropicMessageCacheControl,
+} from "./utils/anthropic-cache";
 
 export type StreamTextParams = Parameters<typeof streamText>[0];
 export type StreamTextResult = Awaited<ReturnType<typeof streamText>>;
@@ -59,8 +66,12 @@ export function streamTextWithCompatibleTools({
   tools,
   messages,
   logger,
+  anthropicCacheControl,
   ...rest
-}: StreamTextParams & { logger: ILogger }) {
+}: StreamTextParams & {
+  logger: ILogger;
+  anthropicCacheControl?: AnthropicCacheControl | null;
+}) {
   messages = [...(messages || [])];
 
   const toolDesc = Object.entries((tools = tools || {})).map(([name, tool]) => {
@@ -81,6 +92,11 @@ export function streamTextWithCompatibleTools({
       "\nAvailable tools:\n" +
       JSON.stringify(toolDesc, null, 2),
   };
+
+  const patchedCompatibleSystemPrompt = withAnthropicMessageCacheControl(
+    compatibleSystemPrompt,
+    anthropicCacheControl ?? null,
+  );
 
   const { promise: finishReason, resolve: resolveFinishReason } =
     Promise.withResolvers<FinishReason>();
@@ -109,10 +125,28 @@ export function streamTextWithCompatibleTools({
     let pendingBoundarySeparator = false;
 
     while (true) {
+      const messagesWithSystem = insertSystemMessageAfterLastSystem(
+        messages,
+        patchedCompatibleSystemPrompt,
+      );
+
+      validateAnthropicCacheControlCoverage(
+        messagesWithSystem,
+        anthropicCacheControl ?? null,
+        logger,
+        {
+          providerModel:
+            typeof rest.model === "string"
+              ? rest.model
+              : `${rest.model.provider}/${rest.model.modelId}`,
+          toolMode: "compatible",
+        },
+      );
+
       const { textStream, finishReason, response, reasoning, warnings } =
         streamText({
           ...rest,
-          messages: [compatibleSystemPrompt, ...messages],
+          messages: messagesWithSystem,
           prompt: undefined,
           tools: undefined,
         });

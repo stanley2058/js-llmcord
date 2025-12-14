@@ -92,9 +92,22 @@ models:
 
   openrouter/anthropic/claude-sonnet-4:
     anthropic_cache_control: false
+    # anthropic_cache_ttl: "1h" # optional TTL
+    # anthropic_cache_tools: false # optional; default false
 
   ai-gateway/anthropic/claude-sonnet-4.5:
+    # Enables Anthropic prompt caching breakpoints on system messages.
     anthropic_cache_control: false
+    # anthropic_cache_ttl: "1h" # optional TTL
+
+    # Controls whether tool definitions get Anthropic cacheControl.
+    # Default: false
+    # anthropic_cache_tools: false
+
+    # AI Gateway upstream order for Anthropic models.
+    # Default: ["anthropic", "vertex", "bedrock"]
+    # ai_gateway_order: ["anthropic", "vertex", "bedrock"]
+
     thinking:
       type: enabled
       budget_tokens: 1500
