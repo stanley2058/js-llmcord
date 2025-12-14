@@ -45,6 +45,7 @@ import { inspect } from "bun";
 import { ToolManager } from "./tool";
 import type { Config } from "./type";
 import {
+  maybeYieldBoundarySeparator,
   streamTextWithCompatibleTools,
   type StreamTextParams,
 } from "./streaming-compatible";
@@ -807,7 +808,13 @@ export class DiscordOperator {
       const generateStream = async () => {
         const stream = compatibleMode
           ? streamTextWithCompatibleTools({ ...opts, logger: this.logger })
-          : streamText(opts);
+          : streamText({
+              ...opts,
+              onStepFinish: (step) => {
+                opts.onStepFinish?.(step);
+                if (step.toolCalls?.length) pendingBoundarySeparator = true;
+              },
+            });
 
         const { textStream, finishReason, response, reasoning, warnings } =
           stream;
@@ -816,9 +823,24 @@ export class DiscordOperator {
         }
 
         let contentAcc = "";
+        let pendingBoundarySeparator = false;
+        let lastAccChar = "";
+
         const streamingDonePromise = new Promise<void>((resolve) => {
           (async () => {
-            for await (const textPart of textStream) contentAcc += textPart;
+            for await (const textPart of textStream) {
+              if (!compatibleMode && pendingBoundarySeparator) {
+                const sep = maybeYieldBoundarySeparator(lastAccChar, textPart, " ");
+                if (sep) {
+                  contentAcc += sep;
+                  lastAccChar = sep.at(-1) ?? lastAccChar;
+                }
+                pendingBoundarySeparator = false;
+              }
+
+              contentAcc += textPart;
+              lastAccChar = textPart.at(-1) ?? lastAccChar;
+            }
             resolve();
           })();
         });

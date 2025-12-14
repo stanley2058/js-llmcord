@@ -31,6 +31,30 @@ function maybeToolCallEnd(text: string) {
 }
 
 const toolCallIdPrefix = "compatible-tool";
+
+export function shouldInsertBoundarySeparator(
+  prevLastChar: string,
+  nextFirstChar: string,
+): boolean {
+  // Insert a small boundary when stitching streamed segments, but only when
+  // concatenation would merge markdown delimiters (e.g. `*` + `*` => `**`).
+  // This commonly happens around tool-call boundaries.
+  if (!prevLastChar || !nextFirstChar) return false;
+
+  const mergeable = new Set(["*", "_", "`", "~", "$"]);
+  return prevLastChar === nextFirstChar && mergeable.has(prevLastChar);
+}
+
+export function maybeYieldBoundarySeparator(
+  prevLastChar: string,
+  nextChunk: string,
+  separator: string = " ",
+): string {
+  if (!nextChunk) return "";
+  const nextFirstChar = nextChunk[0] ?? "";
+  return shouldInsertBoundarySeparator(prevLastChar, nextFirstChar) ? separator : "";
+}
+
 export function streamTextWithCompatibleTools({
   tools,
   messages,
@@ -81,6 +105,9 @@ export function streamTextWithCompatibleTools({
   const generateCallId = () => `${toolCallIdPrefix}-${++callSequence}`;
   const accumulatedWarnings: CallWarning[] = [];
   const textStreamOut = async function* () {
+    let lastEmittedChar = "";
+    let pendingBoundarySeparator = false;
+
     while (true) {
       const { textStream, finishReason, response, reasoning, warnings } =
         streamText({
@@ -101,7 +128,17 @@ export function streamTextWithCompatibleTools({
           inToolCall = true;
           buffer = chunk;
         } else {
+          if (pendingBoundarySeparator) {
+            const sep = maybeYieldBoundarySeparator(lastEmittedChar, chunk);
+            if (sep) {
+              yield sep;
+              lastEmittedChar = sep.at(-1) ?? lastEmittedChar;
+            }
+            pendingBoundarySeparator = false;
+          }
+
           yield chunk;
+          lastEmittedChar = chunk.at(-1) ?? lastEmittedChar;
           continue;
         }
 
@@ -137,6 +174,11 @@ export function streamTextWithCompatibleTools({
       finalResponsesAccu.push(...respMessages);
       reasoningMessages.push(...(await reasoning));
       accumulatedWarnings.push(...((await warnings) || []));
+
+      // If the model just asked to call a tool, the next assistant phase will be
+      // produced in a subsequent streamText() call. Mark a boundary so we can
+      // avoid concatenating markdown tokens across the seam.
+      if (toolMatch) pendingBoundarySeparator = true;
 
       const [, toolName, payload] = toolMatch ?? [];
       const tool = toolName && tools?.[toolName];
