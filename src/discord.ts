@@ -1,10 +1,5 @@
 import {
-  ActionRowBuilder,
   ActivityType,
-  ApplicationCommandOptionType,
-  ApplicationCommandType,
-  ButtonBuilder,
-  ButtonStyle,
   ChannelType,
   Client,
   Collection,
@@ -12,15 +7,9 @@ import {
   ComponentType,
   EmbedBuilder,
   GatewayIntentBits,
-  InteractionType,
   Message,
-  MessageFlags,
   MessageType,
-  ModalBuilder,
   Partials,
-  TextInputBuilder,
-  TextInputStyle,
-  type ApplicationCommandData,
   type CacheType,
   type Interaction,
 } from "discord.js";
@@ -31,36 +20,30 @@ import {
 } from "./model-routing";
 import {
   stepCountIs,
-  streamText,
   type CallWarning,
   type DataContent,
   type FinishReason,
   type LanguageModel,
   type ModelMessage,
-  type ReasoningOutput,
-  type LanguageModelUsage,
   type TextPart,
 } from "ai";
 import { getImageUrl } from "./image";
-import { inspect } from "bun";
 import { ToolManager } from "./tool";
 import type { Config } from "./type";
 import {
-  maybeYieldBoundarySeparator,
-  streamTextWithCompatibleTools,
   type StreamTextParams,
 } from "./streaming-compatible";
 import { ModelMessageOperator } from "./model-messages";
-import { buildToolAuditNote, stripToolTraffic } from "./tool-transform";
 import {
   getRecommendedMemoryStringForUsers,
   getUsersFromModelMessages,
 } from "./rag/recommend";
 import { Logger } from "./logger";
-import { setTimeout } from "node:timers/promises";
-import { chunkMarkdownForEmbeds } from "./markdown-chunker";
 import { randomUUID } from "node:crypto";
-import { performance } from "node:perf_hooks";
+import { runStreamAttempt } from "./discord/stream-runner";
+import { handleInteraction } from "./discord/interaction-handlers";
+import { commands } from "./discord/commands";
+import { ensureCommands } from "./discord/ensure-commands";
 import {
   getAiGatewayOrderFromModelConfig,
   getAnthropicCacheControlFromModelConfig,
@@ -85,13 +68,7 @@ const VISION_MODEL_TAGS = [
   "vl",
 ] as const;
 
-const STREAMING_INDICATOR = " ⚪";
-const EDIT_DELAY_SECONDS = 0.1;
-// Buffer for potential closing tags when splitting markdown (worst case: **~~*` needs `*~~**)
-const CLOSING_TAG_BUFFER = 10;
-
 const EMBED_COLOR_COMPLETE = Colors.Blue;
-const EMBED_COLOR_INCOMPLETE = Colors.Yellow;
 
 const Warning = {
   maxText: "⚠️ Exceeding max text length per message.",
@@ -108,135 +85,6 @@ type JSONLike =
   | boolean
   | JSONLike[]
   | { [k: string]: JSONLike };
-
-function formatNumber(v: number): string {
-  return Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(v);
-}
-
-function toFixedIfNumber(v: number | null, digits: number): string | null {
-  return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : null;
-}
-
-function lastPathSegment(providerModel: string): string {
-  const clean = providerModel.replace(/:vision$/i, "");
-  const lastSlash = clean.lastIndexOf("/");
-  return lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean;
-}
-
-function buildStatsForNerdsLogLine({
-  providerModel,
-  totalUsage,
-  ttftSeconds,
-  outputSeconds,
-}: {
-  providerModel: string;
-  totalUsage: LanguageModelUsage | null;
-  ttftSeconds: number | null;
-  outputSeconds: number | null;
-}): string {
-  const model = lastPathSegment(providerModel);
-
-  const inputTokens = totalUsage?.inputTokens;
-  const cachedInputTokens = totalUsage?.cachedInputTokens;
-  const outputTokens = totalUsage?.outputTokens;
-  const reasoningTokens = totalUsage?.reasoningTokens;
-
-  const parts: string[] = [`[M]: ${model}`];
-
-  const tokenParts: string[] = [];
-  if (typeof inputTokens === "number") {
-    const cachedNote =
-      typeof cachedInputTokens === "number"
-        ? ` (C: ${formatNumber(cachedInputTokens)})`
-        : "";
-    tokenParts.push(`↑${formatNumber(inputTokens)}${cachedNote}`);
-  }
-  if (typeof outputTokens === "number") {
-    const reasoningNote =
-      typeof reasoningTokens === "number"
-        ? ` (R: ${formatNumber(reasoningTokens)})`
-        : "";
-    tokenParts.push(`↓${formatNumber(outputTokens)}${reasoningNote}`);
-  }
-  if (tokenParts.length) {
-    parts.push(`[T]: ${tokenParts.join(" ")}`);
-  }
-
-  const ttft = toFixedIfNumber(ttftSeconds, 1);
-  if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
-
-  const tps =
-    typeof outputTokens === "number" &&
-    typeof outputSeconds === "number" &&
-    outputSeconds > 0
-      ? outputTokens / outputSeconds
-      : null;
-  const tpsFixed = toFixedIfNumber(tps, 1);
-  if (tpsFixed !== null) parts.push(`[TPS]: ${tpsFixed}`);
-
-  return parts.join("; ");
-}
-
-function buildStatsForNerdsField({
-  providerModel,
-  totalUsage,
-  ttftSeconds,
-  outputSeconds,
-}: {
-  providerModel: string;
-  totalUsage: LanguageModelUsage | null;
-  ttftSeconds: number | null;
-  outputSeconds: number | null;
-}): { name: string; value: string; inline: false } | null {
-  const model = lastPathSegment(providerModel);
-
-  const inputTokens = totalUsage?.inputTokens;
-  const cachedInputTokens = totalUsage?.cachedInputTokens;
-  const outputTokens = totalUsage?.outputTokens;
-  const reasoningTokens = totalUsage?.reasoningTokens;
-
-  const tokenLineParts: string[] = [];
-  if (typeof inputTokens === "number") {
-    const cachedNote =
-      typeof cachedInputTokens === "number"
-        ? ` (Cached: ${formatNumber(cachedInputTokens)})`
-        : "";
-    tokenLineParts.push(`\`↑${formatNumber(inputTokens)}\`${cachedNote}`);
-  }
-  if (typeof outputTokens === "number") {
-    const reasoningNote =
-      typeof reasoningTokens === "number"
-        ? ` (Reasoning: ${formatNumber(reasoningTokens)})`
-        : "";
-    tokenLineParts.push(`\`↓${formatNumber(outputTokens)}\`${reasoningNote}`);
-  }
-
-  const tps =
-    typeof outputTokens === "number" && typeof outputSeconds === "number" && outputSeconds > 0
-      ? outputTokens / outputSeconds
-      : null;
-
-  const lines: string[] = [];
-  lines.push(`- Model: \`${model}\``);
-  if (tokenLineParts.length) {
-    lines.push(`- Tokens: ${tokenLineParts.join(" ")}`);
-  }
-
-  const timingParts: string[] = [];
-  const ttft = toFixedIfNumber(ttftSeconds, 1);
-  if (ttft !== null) timingParts.push(`\`[TTFT]: ${ttft}s\``);
-  const tpsFixed = toFixedIfNumber(tps, 1);
-  if (tpsFixed !== null) timingParts.push(`\`[TPS]: ${tpsFixed}\``);
-  if (timingParts.length) {
-    lines.push(`- ${timingParts.join(" ")}`);
-  }
-
-  if (lines.length <= 1) return null;
-
-  let value = lines.join("\n");
-  if (value.length > 1024) value = value.slice(0, 1021) + "...";
-  return { name: "Stats for nerds", value, inline: false };
-}
 
 export class DiscordOperator {
   private client: Client;
@@ -297,75 +145,10 @@ export class DiscordOperator {
     this.logger.logDebug("Discord operator initialized");
   }
 
-  private commands: Record<string, ApplicationCommandData> = {
-    model: {
-      name: "model",
-      description: "View or switch the current model",
-      type: ApplicationCommandType.ChatInput,
-      options: [
-        {
-          type: ApplicationCommandOptionType.String,
-          name: "model",
-          description: "Model name",
-          required: true,
-          autocomplete: true,
-        },
-      ],
-    },
-    "reload-tools": {
-      name: "reload-tools",
-      description: "Reload tools",
-      type: ApplicationCommandType.ChatInput,
-    },
-    tools: {
-      name: "tools",
-      description:
-        "Toggle tools for the models (use `/list-tools` to see available tools)",
-      type: ApplicationCommandType.ChatInput,
-      options: [
-        {
-          type: ApplicationCommandOptionType.String,
-          name: "tools",
-          description: "Tools to toggle on/off (comma-separated)",
-          required: true,
-        },
-      ],
-    },
-    "list-tools": {
-      name: "list-tools",
-      description: "List all available tools",
-      type: ApplicationCommandType.ChatInput,
-      options: [
-        {
-          type: ApplicationCommandOptionType.String,
-          name: "tool",
-          description: "Tool to get details for",
-          required: false,
-        },
-      ],
-    },
-  };
-
-  private async ensureCommands() {
-    this.cachedConfig = await getConfig();
-    if (!this.client.application) throw new Error("Client not initialized");
-    const cmds = await this.client.application.commands.fetch();
-    const commands = new Map(cmds.map((c) => [c.name, c]));
-
-    for (const [name, cmd] of Object.entries(this.commands)) {
-      this.logger.logDebug(`Register ${name} command`);
-      const existing = commands.get(name);
-      if (existing) {
-        await existing.edit(cmd);
-      } else {
-        await this.client.application.commands.create(cmd);
-      }
-    }
-  }
 
   private async clientReady() {
     this.cachedConfig = await getConfig();
-    await this.ensureCommands();
+    await ensureCommands({ client: this.client, commands, logger: this.logger });
     await this.setStatus();
     const clientId = this.cachedConfig.client_id
       ? String(this.cachedConfig.client_id)
@@ -388,176 +171,22 @@ export class DiscordOperator {
   };
 
   private interactionCreate = async (interaction: Interaction<CacheType>) => {
-    this.cachedConfig = await getConfig();
-
-    if (interaction.isButton()) {
-      if (interaction.customId === "show_reasoning_modal") {
-        this.logger.logDebug("[Interaction] show_reasoning_modal");
-
-        const messageId = interaction.message.id;
-        const reasoning = this.modelMessageOperator.getReasoning(messageId);
-        const existing = reasoning?.reasoning_summary ?? "No reasoning found.";
-
-        const modal = new ModalBuilder()
-          .setCustomId(`reasoning_modal:${messageId}`)
-          .setTitle("Reasoning summary");
-
-        const input = new TextInputBuilder()
-          .setCustomId("reasoning_text")
-          .setLabel("Model's reasoning summary")
-          .setStyle(TextInputStyle.Paragraph)
-          .setValue(existing.slice(0, 1900))
-          .setRequired(false);
-
-        const row = new ActionRowBuilder<TextInputBuilder>().addComponents(
-          input,
-        );
-        modal.addComponents(row);
-
-        await interaction.showModal(modal);
-        return;
-      }
-
-      if (interaction.customId.startsWith("cancel_")) {
-        const id = interaction.customId.replace("cancel_", "");
-        const controller = this.cancellationMap.get(id);
-
-        if (!controller) {
-          await interaction.reply({
-            content: "This generation is no longer active.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
-        controller.abort();
-        this.cancellationMap.delete(id);
-        await interaction.reply({
-          content: "Request cancelled.",
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-    }
-
-    if (interaction.type === InteractionType.ApplicationCommandAutocomplete) {
-      const focused = interaction.options.getFocused(true);
-      if (interaction.commandName === "model" && focused.name === "model") {
-        this.logger.logDebug("[Interaction] model");
-        try {
-          if (interaction.responded) return;
-          const curr = this.curProviderModel;
-          const currStr = String(focused.value || "").toLowerCase();
-          const choices: Array<{ name: string; value: string }> = [];
-          if (curr.toLowerCase().includes(currStr))
-            choices.push({ name: `◉ ${curr} (current)`, value: curr });
-          for (const m of Object.keys(this.cachedConfig.models || {})) {
-            if (m === curr) continue;
-            if (!m.toLowerCase().includes(currStr)) continue;
-            choices.push({ name: `○ ${m}`, value: m });
-          }
-          await interaction.respond(choices.slice(0, 25));
-        } catch (e) {
-          this.logger.logError(e);
-          if (interaction.responded) return;
-          try {
-            await interaction.respond([]);
-          } catch (e) {
-            this.logger.logError(e);
-          }
-        }
-      }
-      return;
-    }
-
-    if (!interaction.isChatInputCommand()) return;
-    const isDM = interaction.channel?.type === ChannelType.DM;
-    if (interaction.commandName === "model") {
-      const model = interaction.options.getString("model", true);
-      const adminIds = decodeIds(this.cachedConfig.permissions.users.admin_ids);
-      const userIsAdmin = adminIds.has(interaction.user.id);
-      let output = "";
-
-      switch (true) {
-        case model === this.curProviderModel:
-          output = `Current model: \`${this.curProviderModel}\``;
-          break;
-        case userIsAdmin:
-          this.curProviderModel = model;
-          output = `Model switched to: \`${model}\``;
-          this.logger.logInfo(output);
-          break;
-        default:
-          output = "You don't have permission to change the model.";
-          break;
-      }
-
-      await interaction.reply({
-        content: output,
-        flags: isDM ? MessageFlags.Ephemeral : undefined,
-      });
-    }
-    if (interaction.commandName === "tools") {
-      const toolsRaw = interaction.options.getString("tools", true);
-      const adminIds = decodeIds(this.cachedConfig.permissions.users.admin_ids);
-      const userIsAdmin = adminIds.has(interaction.user.id);
-
-      let output = "";
-      if (!userIsAdmin) {
-        output = "You don't have permission to change the model.";
-      } else {
-        const tools = toolsRaw.split(",").map((t) => t.trim());
-        const outputs: string[] = [];
-        for (const tool of tools) {
-          if (this.toolManager.disabledTools.has(tool)) {
-            this.toolManager.disabledTools.delete(tool);
-            outputs.push(`- ◉ \`${tool}\``);
-          } else {
-            this.toolManager.disabledTools.add(tool);
-            outputs.push(`- ○ \`${tool}\``);
-          }
-        }
-        output = "**Updated tools:**\n" + outputs.join("\n");
-        this.logger.logInfo(output);
-      }
-
-      await interaction.reply({
-        content: output,
-        flags: isDM ? MessageFlags.Ephemeral : undefined,
-      });
-    }
-    if (interaction.commandName === "list-tools") {
-      const toolDetail = interaction.options.getString("tool", false);
-      await interaction.deferReply({
-        flags: isDM ? MessageFlags.Ephemeral : undefined,
-      });
-
-      const allTools = await this.toolManager.getAllTools();
-      const tools = Object.keys(allTools || {});
-      const list: string[] = [];
-      for (const tool of tools) {
-        const { description } = allTools?.[tool] || {};
-        let output = "";
-        if (this.toolManager.disabledTools.has(tool)) {
-          output = `- ○ \`${tool}\``;
-        } else {
-          output = `- ◉ \`${tool}\``;
-        }
-        if (toolDetail && toolDetail === tool) output += `\n  - ${description}`;
-        list.push(output);
-      }
-      await interaction.editReply({ content: list.join("\n").slice(0, 2000) });
-    }
-    if (interaction.commandName === "reload-tools") {
-      await interaction.deferReply({
-        flags: isDM ? MessageFlags.Ephemeral : undefined,
-      });
-      await interaction.editReply({ content: "Reloading tools..." });
-      await this.toolManager.destroy();
-      await this.toolManager.init();
-      this.logger.logDebug("[Interaction] reload-tools");
-      await interaction.editReply({ content: "Tools reloaded." });
-    }
+    await handleInteraction(interaction, {
+      getConfig,
+      setCachedConfig: (config: unknown) => {
+        this.cachedConfig = config as Config;
+      },
+      getCachedConfig: () => this.cachedConfig,
+      getCurProviderModel: () => this.curProviderModel,
+      setCurProviderModel: (model: string) => {
+        this.curProviderModel = model;
+      },
+      toolManager: this.toolManager,
+      cancellationMap: this.cancellationMap,
+      modelMessageOperator: this.modelMessageOperator,
+      logger: this.logger,
+      decodeIds,
+    });
   };
 
   private async prepareMessageCreate(msg: Message) {
@@ -791,152 +420,6 @@ export class DiscordOperator {
     }
   }
 
-  private async startContentPusher({
-    baseMsg,
-    getContent,
-    getMaxLength,
-    streamDone,
-    warnEmbed,
-    useSmartSplitting,
-  }: {
-    baseMsg: Message;
-    getContent: () => string;
-    getMaxLength: (isStreaming: boolean) => number;
-    streamDone: Promise<void>;
-    warnEmbed: EmbedBuilder | null;
-    useSmartSplitting: boolean;
-  }) {
-    let streaming = true;
-    let loopIterations = 0;
-    streamDone.then(() => {
-      streaming = false;
-      this.logger.logDebug(
-        `[Pusher] streamDone resolved, loopIterations=${loopIterations}, contentLength=${getContent().length}`,
-      );
-    });
-
-    const chunkMessages: Message[] = [];
-    const discordMessageCreated: string[] = [];
-
-    // Cache the last embed state we sent, to avoid spamming the Discord API.
-    const sentDescriptions: string[] = [];
-    const sentColors: number[] = [];
-
-    // Last computed display chunks (no indicator).
-    let responseQueue: string[] = [];
-
-    const buildEmbed = (description: string, color: number) => {
-      const emb = warnEmbed
-        ? new EmbedBuilder(warnEmbed.toJSON())
-        : new EmbedBuilder();
-      emb.setDescription(description || "*\<empty_string\>*");
-      emb.setColor(color);
-      return emb;
-    };
-
-    const syncToDiscord = async (content: string): Promise<boolean> => {
-      // Reserve room for the streaming indicator in the last chunk, even after the
-      // stream is done. This keeps message boundaries stable and avoids shrinking.
-      const maxChunkLength = getMaxLength(false);
-      const maxLastChunkLength = getMaxLength(true);
-
-      const displayChunks = chunkMarkdownForEmbeds(content, {
-        maxChunkLength,
-        maxLastChunkLength,
-        useSmartSplitting,
-      });
-
-      responseQueue = displayChunks;
-
-      if (displayChunks.length === 0) {
-        return false;
-      }
-
-      let didUpdate = false;
-
-      for (let i = 0; i < displayChunks.length; i++) {
-        const chunk = displayChunks[i] ?? "";
-        const isLast = i === displayChunks.length - 1;
-        const showStreamIndicator = streaming && isLast;
-
-        const description = (() => {
-          if (!showStreamIndicator) return chunk;
-
-          // If the chunk ends with a block-closing marker, keep that marker intact
-          // on its own line (e.g. ``` or $$) so the block still renders.
-          const lines = chunk.split("\n");
-          for (let j = lines.length - 1; j >= 0; j--) {
-            const trimmed = (lines[j] ?? "").trim();
-            if (trimmed.length === 0) continue;
-
-            if (trimmed === "```" || trimmed === "$$") {
-              // Keep indicator length stable ("\n⚪" vs " ⚪").
-              return chunk + "\n" + STREAMING_INDICATOR.trimStart();
-            }
-            break;
-          }
-
-          return chunk + STREAMING_INDICATOR;
-        })();
-        const color = showStreamIndicator
-          ? EMBED_COLOR_INCOMPLETE
-          : EMBED_COLOR_COMPLETE;
-
-        const emb = buildEmbed(description, color);
-
-        if (i >= chunkMessages.length) {
-          const parent = i === 0 ? baseMsg : chunkMessages[i - 1]!;
-          const msg = await parent.reply({
-            embeds: [emb],
-            allowedMentions: { parse: [], repliedUser: false },
-          });
-
-          chunkMessages.push(msg);
-          discordMessageCreated.push(msg.id);
-          sentDescriptions[i] = description;
-          sentColors[i] = color;
-          didUpdate = true;
-          continue;
-        }
-
-        if (sentDescriptions[i] !== description || sentColors[i] !== color) {
-          await this.safeEdit(chunkMessages[i]!, { embeds: [emb] });
-          sentDescriptions[i] = description;
-          sentColors[i] = color;
-          didUpdate = true;
-        }
-      }
-
-      return didUpdate;
-    };
-
-    while (true) {
-      loopIterations++;
-      const content = getContent();
-      const didUpdate = await syncToDiscord(content);
-
-      if (!streaming) {
-        // Keep syncing until we observe a stable (fully finalized) state.
-        if (!didUpdate) {
-          this.logger.logDebug(
-            `[Pusher] exiting loop: iterations=${loopIterations}, contentLength=${content.length}, messagesCreated=${discordMessageCreated.length}`,
-          );
-          break;
-        }
-        continue;
-      }
-
-      await setTimeout(EDIT_DELAY_SECONDS * 1000);
-    }
-
-    const lastMsg = chunkMessages.at(-1) ?? baseMsg;
-
-    return {
-      lastMsg,
-      responseQueue,
-      discordMessageCreated,
-    };
-  }
 
   private messageCreate = async (msg: Message) => {
     const options = await this.prepareStreamOptions(msg);
@@ -953,222 +436,31 @@ export class DiscordOperator {
     } = options;
 
     const typingInterval = setInterval(() => this.sendTyping(msg), 1000 * 5);
-    let btnMessage: Message | null = null;
     try {
-      const cancelButton = new ButtonBuilder()
-        .setCustomId(`cancel_${id}`)
-        .setLabel("Cancel")
-        .setStyle(ButtonStyle.Danger);
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        cancelButton,
-      );
-      btnMessage = await msg.reply({
-        content: "*Replying...*",
-        components: [row],
-        allowedMentions: { parse: [], repliedUser: false },
-      });
-
       this.sendTyping(msg);
 
       const generateStream = async () => {
-        const stream = compatibleMode
-          ? streamTextWithCompatibleTools({
-              ...opts,
-              logger: this.logger,
-              anthropicCacheControl,
-            })
-          : streamText({
-              ...opts,
-              onStepFinish: (step) => {
-                opts.onStepFinish?.(step);
-                if (step.toolCalls?.length) pendingBoundarySeparator = true;
-              },
-            });
-
-        const { textStream, finishReason, response, reasoning, warnings } =
-          stream;
-
-        const requestStartMs = performance.now();
-        let firstTokenMs: number | null = null;
-        if (this.cachedConfig.debug_message) {
-          this.logger.logDebug(inspect(messages));
-        }
-
-        let contentAcc = "";
-        let pendingBoundarySeparator = false;
-        let lastAccChar = "";
-
-        const streamingDonePromise = new Promise<void>((resolve) => {
-          (async () => {
-            for await (const textPart of textStream) {
-              if (firstTokenMs === null) {
-                firstTokenMs = performance.now();
-              }
-
-              if (!compatibleMode && pendingBoundarySeparator) {
-                const sep = maybeYieldBoundarySeparator(
-                  lastAccChar,
-                  textPart,
-                  " ",
-                );
-                if (sep) {
-                  contentAcc += sep;
-                  lastAccChar = sep.at(-1) ?? lastAccChar;
-                }
-                pendingBoundarySeparator = false;
-              }
-
-              contentAcc += textPart;
-              lastAccChar = textPart.at(-1) ?? lastAccChar;
-            }
-            resolve();
-          })();
-        });
-
-        const useSmartSplitting =
-          this.cachedConfig.experimental_overflow_splitting ?? false;
-        const pusherPromise = this.startContentPusher({
-          baseMsg: msg,
-          getContent: () => contentAcc,
-          getMaxLength: (isStreaming) =>
-            usePlainResponses
-              ? 4000
-              : isStreaming
-                ? 4096 -
-                  STREAMING_INDICATOR.length -
-                  (useSmartSplitting ? CLOSING_TAG_BUFFER : 0)
-                : 4096 - (useSmartSplitting ? CLOSING_TAG_BUFFER : 0),
-          streamDone: streamingDonePromise,
+        await runStreamAttempt({
+          ctx: {
+            logger: this.logger,
+            config: this.cachedConfig,
+            curProviderModel: this.curProviderModel,
+            safeEdit: this.safeEdit.bind(this),
+            logStreamWarning: this.logStreamWarning.bind(this),
+            logStreamFinishReason: this.logStreamFinishReason.bind(this),
+            modelMessageOperator: this.modelMessageOperator,
+          },
+          msg,
+          id,
+          opts,
+          messages,
+          currentMessageImageIds,
+          compatibleMode,
+          usePlainResponses,
           warnEmbed,
-          useSmartSplitting,
+          anthropicCacheControl,
+          typingInterval,
         });
-
-        await streamingDonePromise;
-        const reason = await finishReason;
-
-        const requestEndMs = performance.now();
-        const ttftSeconds =
-          firstTokenMs === null ? null : (firstTokenMs - requestStartMs) / 1000;
-        const outputSeconds =
-          firstTokenMs === null ? null : (requestEndMs - firstTokenMs) / 1000;
-
-        let { lastMsg, responseQueue, discordMessageCreated } =
-          await pusherPromise;
-        if (contentAcc.length === 0) {
-          await Promise.all(
-            discordMessageCreated.map((id) => msg.channel.messages.delete(id)),
-          );
-          throw new Error("No content generated");
-        }
-
-        if (usePlainResponses) {
-          for (const content of responseQueue) {
-            lastMsg = await lastMsg.reply({
-              content,
-              allowedMentions: { parse: [], repliedUser: false },
-            });
-          }
-        }
-
-        clearInterval(typingInterval);
-
-        this.logger.logInfo(`received total text length: ${contentAcc.length}`);
-        this.logStreamWarning(await warnings);
-        this.logStreamFinishReason(reason);
-
-        const totalUsage: LanguageModelUsage | null =
-          this.cachedConfig.stats_for_nerds && "totalUsage" in stream
-            ? ((await (stream as { totalUsage?: Promise<unknown> }).totalUsage) as
-                | LanguageModelUsage
-                | null
-                | undefined) ?? null
-            : null;
-
-        if (this.cachedConfig.debug_message) {
-          this.logger.logDebug(`Stream finished with reason: ${reason}`);
-        }
-
-        if (this.cachedConfig.stats_for_nerds && !usePlainResponses) {
-          const field = buildStatsForNerdsField({
-            providerModel: this.curProviderModel,
-            totalUsage,
-            ttftSeconds,
-            outputSeconds,
-          });
-
-          if (field) {
-            const emb = warnEmbed
-              ? new EmbedBuilder(warnEmbed.toJSON())
-              : new EmbedBuilder();
-
-            const desc = responseQueue.at(-1) ?? "";
-            emb.setDescription(desc || "*\<empty_string\>*");
-            emb.setColor(EMBED_COLOR_COMPLETE);
-            emb.addFields(field);
-            await this.safeEdit(lastMsg, { embeds: [emb] });
-          }
-        }
-
-        const resp = await response;
-        const stripped = stripToolTraffic(resp.messages);
-
-        if (this.cachedConfig.tools?.include_summary) {
-          const toolSummary = buildToolAuditNote(resp.messages);
-          if (stripped[0]?.role === "assistant" && toolSummary) {
-            if (typeof stripped[0].content === "string") {
-              stripped[0].content += `\n\n${toolSummary}`;
-            } else {
-              stripped[0].content.push({ type: "text", text: toolSummary });
-            }
-          }
-        }
-
-        const reasoningMessages: ReasoningOutput[] = [];
-        for (const msg of resp.messages) {
-          if (msg.role !== "assistant") continue;
-          if (typeof msg.content === "string") continue;
-          const parts = msg.content.filter((p) => p.type === "reasoning");
-          if (parts.length === 0) continue;
-          reasoningMessages.push(...parts);
-        }
-        const reasoningResp = await reasoning;
-
-        const reasoningSummary = (
-          reasoningResp.length > 0 ? reasoningResp : reasoningMessages
-        )
-          .map((r) => r.text)
-          .join("\n\n");
-        await this.modelMessageOperator.create({
-          messageId: discordMessageCreated,
-          parentMessageId: msg.id,
-          messages: stripped,
-          imageIds:
-            currentMessageImageIds.length > 0
-              ? currentMessageImageIds
-              : undefined,
-          reasoningSummary,
-        });
-
-        if (reasoningSummary) {
-          const button = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder()
-              .setCustomId("show_reasoning_modal")
-              .setLabel("Show reasoning")
-              .setStyle(ButtonStyle.Secondary),
-          );
-          await this.safeEdit(lastMsg, { components: [button] });
-        }
-
-        if (this.cachedConfig.stats_for_nerds) {
-          this.logger.logInfo(
-            buildStatsForNerdsLogLine({
-              providerModel: this.curProviderModel,
-              totalUsage,
-              ttftSeconds,
-              outputSeconds,
-            }),
-          );
-        }
       };
 
       const maxRetry = Math.max(1, this.cachedConfig.max_retry ?? 3);
@@ -1189,7 +481,6 @@ export class DiscordOperator {
     } finally {
       clearInterval(typingInterval);
       this.cancellationMap.delete(id);
-      await btnMessage?.delete();
     }
   };
 
