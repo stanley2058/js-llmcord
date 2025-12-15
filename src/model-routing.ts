@@ -76,6 +76,7 @@ export async function getProvidersFromConfig() {
           apiKey: config.providers[p]!.api_key,
           headers: config.providers[p]!.extra_headers,
           queryParams: config.providers[p]!.extra_query,
+          includeUsage: Boolean(config.stats_for_nerds),
         }),
       ]),
     ),

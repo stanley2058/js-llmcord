@@ -38,6 +38,7 @@ import {
   type LanguageModel,
   type ModelMessage,
   type ReasoningOutput,
+  type LanguageModelUsage,
   type TextPart,
 } from "ai";
 import { getImageUrl } from "./image";
@@ -59,6 +60,7 @@ import { Logger } from "./logger";
 import { setTimeout } from "node:timers/promises";
 import { chunkMarkdownForEmbeds } from "./markdown-chunker";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import {
   getAiGatewayOrderFromModelConfig,
   getAnthropicCacheControlFromModelConfig,
@@ -106,6 +108,135 @@ type JSONLike =
   | boolean
   | JSONLike[]
   | { [k: string]: JSONLike };
+
+function formatNumber(v: number): string {
+  return Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(v);
+}
+
+function toFixedIfNumber(v: number | null, digits: number): string | null {
+  return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : null;
+}
+
+function lastPathSegment(providerModel: string): string {
+  const clean = providerModel.replace(/:vision$/i, "");
+  const lastSlash = clean.lastIndexOf("/");
+  return lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean;
+}
+
+function buildStatsForNerdsLogLine({
+  providerModel,
+  totalUsage,
+  ttftSeconds,
+  outputSeconds,
+}: {
+  providerModel: string;
+  totalUsage: LanguageModelUsage | null;
+  ttftSeconds: number | null;
+  outputSeconds: number | null;
+}): string {
+  const model = lastPathSegment(providerModel);
+
+  const inputTokens = totalUsage?.inputTokens;
+  const cachedInputTokens = totalUsage?.cachedInputTokens;
+  const outputTokens = totalUsage?.outputTokens;
+  const reasoningTokens = totalUsage?.reasoningTokens;
+
+  const parts: string[] = [`[M]: ${model}`];
+
+  const tokenParts: string[] = [];
+  if (typeof inputTokens === "number") {
+    const cachedNote =
+      typeof cachedInputTokens === "number"
+        ? ` (C: ${formatNumber(cachedInputTokens)})`
+        : "";
+    tokenParts.push(`↑${formatNumber(inputTokens)}${cachedNote}`);
+  }
+  if (typeof outputTokens === "number") {
+    const reasoningNote =
+      typeof reasoningTokens === "number"
+        ? ` (R: ${formatNumber(reasoningTokens)})`
+        : "";
+    tokenParts.push(`↓${formatNumber(outputTokens)}${reasoningNote}`);
+  }
+  if (tokenParts.length) {
+    parts.push(`[T]: ${tokenParts.join(" ")}`);
+  }
+
+  const ttft = toFixedIfNumber(ttftSeconds, 1);
+  if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
+
+  const tps =
+    typeof outputTokens === "number" &&
+    typeof outputSeconds === "number" &&
+    outputSeconds > 0
+      ? outputTokens / outputSeconds
+      : null;
+  const tpsFixed = toFixedIfNumber(tps, 1);
+  if (tpsFixed !== null) parts.push(`[TPS]: ${tpsFixed}`);
+
+  return parts.join("; ");
+}
+
+function buildStatsForNerdsField({
+  providerModel,
+  totalUsage,
+  ttftSeconds,
+  outputSeconds,
+}: {
+  providerModel: string;
+  totalUsage: LanguageModelUsage | null;
+  ttftSeconds: number | null;
+  outputSeconds: number | null;
+}): { name: string; value: string; inline: false } | null {
+  const model = lastPathSegment(providerModel);
+
+  const inputTokens = totalUsage?.inputTokens;
+  const cachedInputTokens = totalUsage?.cachedInputTokens;
+  const outputTokens = totalUsage?.outputTokens;
+  const reasoningTokens = totalUsage?.reasoningTokens;
+
+  const tokenLineParts: string[] = [];
+  if (typeof inputTokens === "number") {
+    const cachedNote =
+      typeof cachedInputTokens === "number"
+        ? ` (Cached: ${formatNumber(cachedInputTokens)})`
+        : "";
+    tokenLineParts.push(`\`↑${formatNumber(inputTokens)}\`${cachedNote}`);
+  }
+  if (typeof outputTokens === "number") {
+    const reasoningNote =
+      typeof reasoningTokens === "number"
+        ? ` (Reasoning: ${formatNumber(reasoningTokens)})`
+        : "";
+    tokenLineParts.push(`\`↓${formatNumber(outputTokens)}\`${reasoningNote}`);
+  }
+
+  const tps =
+    typeof outputTokens === "number" && typeof outputSeconds === "number" && outputSeconds > 0
+      ? outputTokens / outputSeconds
+      : null;
+
+  const lines: string[] = [];
+  lines.push(`- Model: \`${model}\``);
+  if (tokenLineParts.length) {
+    lines.push(`- Tokens: ${tokenLineParts.join(" ")}`);
+  }
+
+  const timingParts: string[] = [];
+  const ttft = toFixedIfNumber(ttftSeconds, 1);
+  if (ttft !== null) timingParts.push(`\`[TTFT]: ${ttft}s\``);
+  const tpsFixed = toFixedIfNumber(tps, 1);
+  if (tpsFixed !== null) timingParts.push(`\`[TPS]: ${tpsFixed}\``);
+  if (timingParts.length) {
+    lines.push(`- ${timingParts.join(" ")}`);
+  }
+
+  if (lines.length <= 1) return null;
+
+  let value = lines.join("\n");
+  if (value.length > 1024) value = value.slice(0, 1021) + "...";
+  return { name: "Stats for nerds", value, inline: false };
+}
 
 export class DiscordOperator {
   private client: Client;
@@ -856,6 +987,9 @@ export class DiscordOperator {
 
         const { textStream, finishReason, response, reasoning, warnings } =
           stream;
+
+        const requestStartMs = performance.now();
+        let firstTokenMs: number | null = null;
         if (this.cachedConfig.debug_message) {
           this.logger.logDebug(inspect(messages));
         }
@@ -867,8 +1001,16 @@ export class DiscordOperator {
         const streamingDonePromise = new Promise<void>((resolve) => {
           (async () => {
             for await (const textPart of textStream) {
+              if (firstTokenMs === null) {
+                firstTokenMs = performance.now();
+              }
+
               if (!compatibleMode && pendingBoundarySeparator) {
-                const sep = maybeYieldBoundarySeparator(lastAccChar, textPart, " ");
+                const sep = maybeYieldBoundarySeparator(
+                  lastAccChar,
+                  textPart,
+                  " ",
+                );
                 if (sep) {
                   contentAcc += sep;
                   lastAccChar = sep.at(-1) ?? lastAccChar;
@@ -903,6 +1045,13 @@ export class DiscordOperator {
 
         await streamingDonePromise;
         const reason = await finishReason;
+
+        const requestEndMs = performance.now();
+        const ttftSeconds =
+          firstTokenMs === null ? null : (firstTokenMs - requestStartMs) / 1000;
+        const outputSeconds =
+          firstTokenMs === null ? null : (requestEndMs - firstTokenMs) / 1000;
+
         let { lastMsg, responseQueue, discordMessageCreated } =
           await pusherPromise;
         if (contentAcc.length === 0) {
@@ -927,8 +1076,37 @@ export class DiscordOperator {
         this.logStreamWarning(await warnings);
         this.logStreamFinishReason(reason);
 
+        const totalUsage: LanguageModelUsage | null =
+          this.cachedConfig.stats_for_nerds && "totalUsage" in stream
+            ? ((await (stream as { totalUsage?: Promise<unknown> }).totalUsage) as
+                | LanguageModelUsage
+                | null
+                | undefined) ?? null
+            : null;
+
         if (this.cachedConfig.debug_message) {
           this.logger.logDebug(`Stream finished with reason: ${reason}`);
+        }
+
+        if (this.cachedConfig.stats_for_nerds && !usePlainResponses) {
+          const field = buildStatsForNerdsField({
+            providerModel: this.curProviderModel,
+            totalUsage,
+            ttftSeconds,
+            outputSeconds,
+          });
+
+          if (field) {
+            const emb = warnEmbed
+              ? new EmbedBuilder(warnEmbed.toJSON())
+              : new EmbedBuilder();
+
+            const desc = responseQueue.at(-1) ?? "";
+            emb.setDescription(desc || "*\<empty_string\>*");
+            emb.setColor(EMBED_COLOR_COMPLETE);
+            emb.addFields(field);
+            await this.safeEdit(lastMsg, { embeds: [emb] });
+          }
         }
 
         const resp = await response;
@@ -978,7 +1156,18 @@ export class DiscordOperator {
               .setLabel("Show reasoning")
               .setStyle(ButtonStyle.Secondary),
           );
-          this.safeEdit(lastMsg, { components: [button] });
+          await this.safeEdit(lastMsg, { components: [button] });
+        }
+
+        if (this.cachedConfig.stats_for_nerds) {
+          this.logger.logInfo(
+            buildStatsForNerdsLogLine({
+              providerModel: this.curProviderModel,
+              totalUsage,
+              ttftSeconds,
+              outputSeconds,
+            }),
+          );
         }
       };
 

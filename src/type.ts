@@ -12,6 +12,7 @@ export type Config = {
   use_plain_responses?: boolean;
   allow_dms?: boolean;
   debug_message?: boolean;
+  stats_for_nerds?: boolean;
   experimental_overflow_splitting?: boolean;
   permissions: {
     users: {

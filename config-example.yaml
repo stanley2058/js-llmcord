@@ -14,6 +14,7 @@ max_retry: 3
 use_plain_responses: false
 allow_dms: true
 debug_message: false
+stats_for_nerds: false
 log_level: info # debug, info, warn, error
 
 # Experimental: Use AST-based markdown splitting to avoid breaking syntax
