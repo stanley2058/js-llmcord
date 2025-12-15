@@ -18,12 +18,12 @@ export function buildStatsForNerdsLogLine({
   providerModel,
   totalUsage,
   ttftSeconds,
-  outputSeconds,
+  totalSeconds,
 }: {
   providerModel: string;
   totalUsage: LanguageModelUsage | null;
   ttftSeconds: number | null;
-  outputSeconds: number | null;
+  totalSeconds: number | null;
 }): string {
   const model = lastPathSegment(providerModel);
 
@@ -56,11 +56,14 @@ export function buildStatsForNerdsLogLine({
   const ttft = toFixedIfNumber(ttftSeconds, 1);
   if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
 
+  const totalOutputTokens =
+    (typeof outputTokens === "number" ? outputTokens : 0) +
+    (typeof reasoningTokens === "number" ? reasoningTokens : 0);
   const tps =
-    typeof outputTokens === "number" &&
-    typeof outputSeconds === "number" &&
-    outputSeconds > 0
-      ? outputTokens / outputSeconds
+    totalOutputTokens > 0 &&
+    typeof totalSeconds === "number" &&
+    totalSeconds > 0
+      ? totalOutputTokens / totalSeconds
       : null;
   const tpsFixed = toFixedIfNumber(tps, 1);
   if (tpsFixed !== null) parts.push(`[TPS]: ${tpsFixed}`);
@@ -72,12 +75,12 @@ export function buildStatsForNerdsField({
   providerModel,
   totalUsage,
   ttftSeconds,
-  outputSeconds,
+  totalSeconds,
 }: {
   providerModel: string;
   totalUsage: LanguageModelUsage | null;
   ttftSeconds: number | null;
-  outputSeconds: number | null;
+  totalSeconds: number | null;
 }): { name: string; value: string; inline: false } | null {
   const model = lastPathSegment(providerModel);
 
@@ -110,11 +113,14 @@ export function buildStatsForNerdsField({
   const ttft = toFixedIfNumber(ttftSeconds, 1);
   if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
 
+  const totalOutputTokens =
+    (typeof outputTokens === "number" ? outputTokens : 0) +
+    (typeof reasoningTokens === "number" ? reasoningTokens : 0);
   const tps =
-    typeof outputTokens === "number" &&
-    typeof outputSeconds === "number" &&
-    outputSeconds > 0
-      ? outputTokens / outputSeconds
+    totalOutputTokens > 0 &&
+    typeof totalSeconds === "number" &&
+    totalSeconds > 0
+      ? totalOutputTokens / totalSeconds
       : null;
   const tpsFixed = toFixedIfNumber(tps, 1);
   if (tpsFixed !== null) parts.push(`[TPS]: ${tpsFixed}`);

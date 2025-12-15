@@ -163,8 +163,7 @@ export async function runStreamAttempt({
     const requestEndMs = performance.now();
     const ttftSeconds =
       firstTokenMs === null ? null : (firstTokenMs - requestStartMs) / 1000;
-    const outputSeconds =
-      firstTokenMs === null ? null : (requestEndMs - firstTokenMs) / 1000;
+    const totalSeconds = (requestEndMs - requestStartMs) / 1000;
 
     let { lastMsg, responseQueue, discordMessageCreated } = await pusherPromise;
     if (contentAcc.length === 0) {
@@ -208,7 +207,7 @@ export async function runStreamAttempt({
         providerModel: ctx.curProviderModel,
         totalUsage,
         ttftSeconds,
-        outputSeconds,
+        totalSeconds,
       });
 
       if (field) {
@@ -281,7 +280,7 @@ export async function runStreamAttempt({
           providerModel: ctx.curProviderModel,
           totalUsage,
           ttftSeconds,
-          outputSeconds,
+          totalSeconds,
         }),
       );
     }
