@@ -10,11 +10,12 @@ import {
   type Interaction,
 } from "discord.js";
 import type { Logger } from "../logger";
+import type { Config } from "../type";
 
 export type InteractionHandlerContext = {
-  getConfig: () => Promise<unknown>;
-  setCachedConfig: (config: unknown) => void;
-  getCachedConfig: () => any;
+  getConfig: () => Promise<Config>;
+  setCachedConfig: (config: Config) => void;
+  getCachedConfig: () => Config;
   getCurProviderModel: () => string;
   setCurProviderModel: (model: string) => void;
   toolManager: {

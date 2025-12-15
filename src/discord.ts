@@ -30,9 +30,7 @@ import {
 import { getImageUrl } from "./image";
 import { ToolManager } from "./tool";
 import type { Config } from "./type";
-import {
-  type StreamTextParams,
-} from "./streaming-compatible";
+import { type StreamTextParams } from "./streaming-compatible";
 import { ModelMessageOperator } from "./model-messages";
 import {
   getRecommendedMemoryStringForUsers,
@@ -145,10 +143,13 @@ export class DiscordOperator {
     this.logger.logDebug("Discord operator initialized");
   }
 
-
   private async clientReady() {
     this.cachedConfig = await getConfig();
-    await ensureCommands({ client: this.client, commands, logger: this.logger });
+    await ensureCommands({
+      client: this.client,
+      commands,
+      logger: this.logger,
+    });
     await this.setStatus();
     const clientId = this.cachedConfig.client_id
       ? String(this.cachedConfig.client_id)
@@ -173,8 +174,8 @@ export class DiscordOperator {
   private interactionCreate = async (interaction: Interaction<CacheType>) => {
     await handleInteraction(interaction, {
       getConfig,
-      setCachedConfig: (config: unknown) => {
-        this.cachedConfig = config as Config;
+      setCachedConfig: (config: Config) => {
+        this.cachedConfig = config;
       },
       getCachedConfig: () => this.cachedConfig,
       getCurProviderModel: () => this.curProviderModel,
@@ -419,7 +420,6 @@ export class DiscordOperator {
         break;
     }
   }
-
 
   private messageCreate = async (msg: Message) => {
     const options = await this.prepareStreamOptions(msg);
