@@ -86,21 +86,29 @@ export function buildStatsForNerdsField({
   const outputTokens = totalUsage?.outputTokens;
   const reasoningTokens = totalUsage?.reasoningTokens;
 
-  const tokenLineParts: string[] = [];
+  const parts: string[] = [`[M]: ${model}`];
+
+  const tokenParts: string[] = [];
   if (typeof inputTokens === "number") {
     const cachedNote =
       typeof cachedInputTokens === "number"
-        ? ` (Cached: ${formatNumber(cachedInputTokens)})`
+        ? ` (C: ${formatNumber(cachedInputTokens)})`
         : "";
-    tokenLineParts.push(`\`↑${formatNumber(inputTokens)}\`${cachedNote}`);
+    tokenParts.push(`↑${formatNumber(inputTokens)}${cachedNote}`);
   }
   if (typeof outputTokens === "number") {
     const reasoningNote =
       typeof reasoningTokens === "number"
-        ? ` (Reasoning: ${formatNumber(reasoningTokens)})`
+        ? ` (R: ${formatNumber(reasoningTokens)})`
         : "";
-    tokenLineParts.push(`\`↓${formatNumber(outputTokens)}\`${reasoningNote}`);
+    tokenParts.push(`↓${formatNumber(outputTokens)}${reasoningNote}`);
   }
+  if (tokenParts.length) {
+    parts.push(`[T]: ${tokenParts.join(" ")}`);
+  }
+
+  const ttft = toFixedIfNumber(ttftSeconds, 1);
+  if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
 
   const tps =
     typeof outputTokens === "number" &&
@@ -108,25 +116,12 @@ export function buildStatsForNerdsField({
     outputSeconds > 0
       ? outputTokens / outputSeconds
       : null;
-
-  const lines: string[] = [];
-  lines.push(`- Model: \`${model}\``);
-  if (tokenLineParts.length) {
-    lines.push(`- Tokens: ${tokenLineParts.join(" ")}`);
-  }
-
-  const timingParts: string[] = [];
-  const ttft = toFixedIfNumber(ttftSeconds, 1);
-  if (ttft !== null) timingParts.push(`\`[TTFT]: ${ttft}s\``);
   const tpsFixed = toFixedIfNumber(tps, 1);
-  if (tpsFixed !== null) timingParts.push(`\`[TPS]: ${tpsFixed}\``);
-  if (timingParts.length) {
-    lines.push(`- ${timingParts.join(" ")}`);
-  }
+  if (tpsFixed !== null) parts.push(`[TPS]: ${tpsFixed}`);
 
-  if (lines.length <= 1) return null;
+  if (parts.length <= 1) return null;
 
-  let value = lines.join("\n");
-  if (value.length > 1024) value = value.slice(0, 1021) + "...";
-  return { name: "Stats for nerds", value, inline: false };
+  let value = `*${parts.join("; ")}*`;
+  if (value.length > 1024) value = value.slice(0, 1021) + "...*";
+  return { name: " ", value, inline: false };
 }
