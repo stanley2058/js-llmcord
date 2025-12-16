@@ -250,17 +250,30 @@ export class DiscordOperator {
       toolManager: this.toolManager,
       cancellationMap: this.cancellationMap,
       modelMessageOperator: this.modelMessageOperator,
+      retryFromMessage: async (msg: Message) =>
+        await this.generateForMessage(msg, { bypassMentionGate: true }),
       logger: this.logger,
       decodeIds,
     });
   };
 
-  private async prepareMessageCreate(msg: Message) {
+  private async prepareMessageCreate(
+    msg: Message,
+    options?: { bypassMentionGate?: boolean },
+  ) {
     this.cachedConfig = await getConfig();
     // prevent infinite loop
     if (msg.author.bot) return false;
     const isDM = msg.channel.type === ChannelType.DM;
-    if (!isDM && !msg.mentions.users.has(this.client.user!.id)) return false;
+    const bypassMentionGate = options?.bypassMentionGate ?? false;
+    if (
+      !bypassMentionGate &&
+      !isDM &&
+      !msg.mentions.users.has(this.client.user!.id)
+    ) {
+      return false;
+    }
+
     const { roleIds, channelIds } = this.getChannelsAndRolesFromMessage(msg);
     const canRespond = this.getChannelPermission({
       messageAuthorId: msg.author.id,
@@ -315,8 +328,11 @@ export class DiscordOperator {
     };
   }
 
-  private async prepareStreamOptions(msg: Message) {
-    const prepared = await this.prepareMessageCreate(msg);
+  private async prepareStreamOptions(
+    msg: Message,
+    options?: { bypassMentionGate?: boolean },
+  ) {
+    const prepared = await this.prepareMessageCreate(msg, options);
     if (!prepared) return false;
     const {
       modelInstance,
@@ -501,8 +517,16 @@ export class DiscordOperator {
   }
 
   private messageCreate = async (msg: Message) => {
-    const options = await this.prepareStreamOptions(msg);
-    if (!options) return;
+    await this.generateForMessage(msg);
+  };
+
+  private async generateForMessage(
+    msg: Message,
+    options?: { bypassMentionGate?: boolean },
+  ) {
+    const streamOptions = await this.prepareStreamOptions(msg, options);
+    if (!streamOptions) return false;
+
     const {
       id,
       opts,
@@ -513,7 +537,7 @@ export class DiscordOperator {
       warnEmbed,
       anthropicCacheControl,
       effectiveModel,
-    } = options;
+    } = streamOptions;
 
     const typingInterval = setInterval(() => this.sendTyping(msg), 1000 * 5);
     try {
@@ -547,7 +571,7 @@ export class DiscordOperator {
       for (let i = 0; i < maxRetry; i++) {
         try {
           await generateStream();
-          break;
+          return true;
         } catch (e) {
           if (i + 1 === maxRetry) throw e;
           this.logger.logError(
@@ -556,13 +580,16 @@ export class DiscordOperator {
           );
         }
       }
+
+      return true;
     } catch (e) {
       this.logger.logError("Error while generating response", e);
+      return false;
     } finally {
       clearInterval(typingInterval);
       this.cancellationMap.delete(id);
     }
-  };
+  }
 
   private messageDelete = async (msg: { id: string }) => {
     await this.modelMessageOperator.removeAll(msg.id);

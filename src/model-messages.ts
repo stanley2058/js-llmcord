@@ -67,6 +67,87 @@ export class ModelMessageOperator {
     }
   }
 
+  async removeMany(messageIds: string[]) {
+    const uniqueMessageIds = [...new Set(messageIds)].filter(Boolean);
+    if (uniqueMessageIds.length === 0) return;
+
+    const MAX_BATCH_DELETE = 900;
+
+    const msgRows: Array<{ message_id: string; image_ids: string | null }> = [];
+    let offset = 0;
+    while (offset < uniqueMessageIds.length) {
+      const batch = uniqueMessageIds.slice(offset, offset + MAX_BATCH_DELETE);
+      offset += batch.length;
+
+      const placeholders = batch.map(() => "?").join(", ");
+      const rows = db
+        .prepare(
+          `SELECT message_id, image_ids FROM model_messages WHERE message_id IN (${placeholders})`,
+        )
+        .all(...batch) as Array<{ message_id: string; image_ids: string | null }>;
+      msgRows.push(...rows);
+    }
+
+    if (msgRows.length === 0) return;
+
+    const actualImageIds = [
+      ...new Set(
+        msgRows
+          .map((r) => r.image_ids)
+          .filter(Boolean)
+          .flatMap((ids) => {
+            try {
+              return JSON.parse(ids!) as string[];
+            } catch {
+              return [];
+            }
+          }),
+      ),
+    ];
+
+    const config = await getConfig();
+    const logger = new Logger({ module: "mmo", logLevel: config.log_level });
+
+    if (config.utApi && actualImageIds.length > 0) {
+      try {
+        await config.utApi.deleteFiles(actualImageIds);
+      } catch (e) {
+        logger.logError("Error deleting from UploadThing:", e);
+      }
+    }
+
+    let imgDelOffset = 0;
+    while (imgDelOffset < actualImageIds.length) {
+      const batch = actualImageIds.slice(
+        imgDelOffset,
+        imgDelOffset + MAX_BATCH_DELETE,
+      );
+      imgDelOffset += batch.length;
+
+      const placeholders = batch.map(() => "?").join(", ");
+      db.prepare(
+        `DELETE FROM image_cache WHERE uploadthing_id IN (${placeholders})`,
+      ).run(...batch);
+    }
+
+    let msgDelOffset = 0;
+    while (msgDelOffset < uniqueMessageIds.length) {
+      const batch = uniqueMessageIds.slice(
+        msgDelOffset,
+        msgDelOffset + MAX_BATCH_DELETE,
+      );
+      msgDelOffset += batch.length;
+
+      const placeholders = batch.map(() => "?").join(", ");
+      db.prepare(
+        `DELETE FROM model_messages WHERE message_id IN (${placeholders})`,
+      ).run(...batch);
+      db.prepare(
+        `DELETE FROM message_reasoning WHERE message_id IN (${placeholders})`,
+      ).run(...batch);
+    }
+  }
+
   async removeAll(messageId: string) {
     const msg = db
       .query(`SELECT * FROM model_messages WHERE message_id = ?`)

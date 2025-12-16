@@ -8,6 +8,7 @@ import {
   TextInputStyle,
   type CacheType,
   type Interaction,
+  type Message,
 } from "discord.js";
 import type { Logger } from "../logger";
 import type { Config } from "../type";
@@ -31,7 +32,9 @@ export type InteractionHandlerContext = {
   cancellationMap: Map<string, AbortController>;
   modelMessageOperator: {
     getReasoning: (messageId: string) => any;
+    removeMany: (messageIds: string[]) => Promise<void>;
   };
+  retryFromMessage: (msg: Message) => Promise<boolean>;
   logger: Logger;
   decodeIds: (xs: Array<string | number> | undefined) => Set<string>;
 };
@@ -67,6 +70,51 @@ export async function handleInteraction(
       modal.addComponents(row);
 
       await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.customId === "retry_last_user_message") {
+      ctx.logger.logDebug("[Interaction] retry_last_user_message");
+
+      await interaction.deferReply({
+        flags: MessageFlags.Ephemeral,
+      });
+
+      const chain = await collectBotReplyChain(interaction.message);
+      if ("error" in chain) {
+        await interaction.editReply({ content: chain.error });
+        return;
+      }
+
+      const { botMessages, rootUserMessage } = chain;
+
+      const adminIds = ctx.decodeIds(cachedConfig.permissions.users.admin_ids);
+      const userIsAdmin = adminIds.has(interaction.user.id);
+      const userIsOriginalAuthor =
+        interaction.user.id === rootUserMessage.author.id;
+
+      if (!userIsAdmin && !userIsOriginalAuthor) {
+        await interaction.editReply({
+          content:
+            "Only the original author or an admin can retry this response.",
+        });
+        return;
+      }
+
+      await interaction.editReply({ content: "Retrying..." });
+
+      try {
+        await ctx.modelMessageOperator.removeMany(botMessages.map((m) => m.id));
+      } catch (e) {
+        ctx.logger.logError(e);
+      }
+
+      await Promise.allSettled(botMessages.map((m) => m.delete()));
+
+      const ok = await ctx.retryFromMessage(rootUserMessage);
+      await interaction.editReply({
+        content: ok ? "Retried." : "Retry failed.",
+      });
       return;
     }
 
@@ -239,4 +287,57 @@ export async function handleInteraction(
     ctx.logger.logDebug("[Interaction] reload-tools");
     await interaction.editReply({ content: "Tools reloaded." });
   }
+}
+
+async function collectBotReplyChain(
+  start: Message,
+): Promise<
+  { botMessages: Message[]; rootUserMessage: Message } | { error: string }
+> {
+  if (!start.author.bot) {
+    return { error: "This message is not a bot response." };
+  }
+
+  const botMessages: Message[] = [];
+  let current: Message | null = start;
+
+  const MAX_DEPTH = 50;
+  for (let i = 0; i < MAX_DEPTH; i++) {
+    if (!current) break;
+    if (!current.author.bot) {
+      return { error: "This message is not a bot response." };
+    }
+
+    botMessages.push(current);
+
+    const refId = current.reference?.messageId;
+    if (!refId) {
+      return {
+        error:
+          "Unable to locate the original user message (it may have been deleted).",
+      };
+    }
+
+    const parent: Message | null = await current
+      .fetchReference()
+      .catch(() => null);
+    if (!parent) {
+      return {
+        error:
+          "Unable to locate the original user message (it may have been deleted).",
+      };
+    }
+
+    if (!parent.author.bot) {
+      const unique = [...new Map(botMessages.map((m) => [m.id, m])).values()];
+      return { botMessages: unique, rootUserMessage: parent };
+    }
+
+    current = parent;
+  }
+
+  return {
+    error:
+      "Unable to locate the original user message (it may have been deleted).",
+  };
 }

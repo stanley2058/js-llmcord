@@ -264,14 +264,26 @@ export async function runStreamAttempt({
       reasoningSummary,
     });
 
-    if (reasoningSummary) {
-      const button = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    {
+      const row = new ActionRowBuilder<ButtonBuilder>();
+
+      if (reasoningSummary) {
+        row.addComponents(
+          new ButtonBuilder()
+            .setCustomId("show_reasoning_modal")
+            .setLabel("Reasoning")
+            .setStyle(ButtonStyle.Secondary),
+        );
+      }
+
+      row.addComponents(
         new ButtonBuilder()
-          .setCustomId("show_reasoning_modal")
-          .setLabel("Show reasoning")
+          .setCustomId("retry_last_user_message")
+          .setLabel("Retry")
           .setStyle(ButtonStyle.Secondary),
       );
-      await ctx.safeEdit(lastMsg, { components: [button] });
+
+      await ctx.safeEdit(lastMsg, { components: [row] });
     }
 
     if (ctx.config.stats_for_nerds) {
