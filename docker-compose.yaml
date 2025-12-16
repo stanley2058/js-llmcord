@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     environment:
       TZ: "UTC" # change this if you want to have localized time
+      # FORCE_COLOR=1 # if you want to force color output
+      # COLORTERM=truecolor # if you want to force true color logging for module names
     volumes:
       - ./config.yaml:/app/config.yaml:ro # your config file
       #- ./config:/app/config # mount the whole folder to allow hot reloading
