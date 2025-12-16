@@ -16,8 +16,12 @@ export type InteractionHandlerContext = {
   getConfig: () => Promise<Config>;
   setCachedConfig: (config: Config) => void;
   getCachedConfig: () => Config;
-  getCurProviderModel: () => string;
-  setCurProviderModel: (model: string) => void;
+  getProviderModelForChannel: (channel: {
+    id: string;
+    parentId?: string | null;
+  }) => string;
+  setProviderModelForChannel: (channelId: string, model: string) => void;
+  setGlobalProviderModel: (model: string) => void;
   toolManager: {
     disabledTools: Set<string>;
     getAllTools: () => Promise<Record<string, any> | undefined>;
@@ -94,7 +98,15 @@ export async function handleInteraction(
       ctx.logger.logDebug("[Interaction] model");
       try {
         if (interaction.responded) return;
-        const curr = ctx.getCurProviderModel();
+        const channel = interaction.channel;
+        if (!channel) {
+          await interaction.respond([]);
+          return;
+        }
+        const curr = ctx.getProviderModelForChannel({
+          id: channel.id,
+          parentId: "parentId" in channel ? channel.parentId : undefined,
+        });
         const currStr = String(focused.value || "").toLowerCase();
         const choices: Array<{ name: string; value: string }> = [];
         if (curr.toLowerCase().includes(currStr))
@@ -126,19 +138,36 @@ export async function handleInteraction(
     const adminIds = ctx.decodeIds(cachedConfig.permissions.users.admin_ids);
     const userIsAdmin = adminIds.has(interaction.user.id);
     let output = "";
+    const isPerChannelEnabled = cachedConfig.per_channel_model ?? false;
 
-    switch (true) {
-      case model === ctx.getCurProviderModel():
-        output = `Current model: \`${ctx.getCurProviderModel()}\``;
-        break;
-      case userIsAdmin:
-        ctx.setCurProviderModel(model);
-        output = `Model switched to: \`${model}\``;
-        ctx.logger.logInfo(output);
-        break;
-      default:
-        output = "You don't have permission to change the model.";
-        break;
+    if (!interaction.channelId) {
+      output = "Unable to determine channel for model override.";
+    } else {
+      const channel = interaction.channel;
+      const curr = channel
+        ? ctx.getProviderModelForChannel({
+            id: channel.id,
+            parentId: "parentId" in channel ? channel.parentId : undefined,
+          })
+        : undefined;
+
+      switch (true) {
+        case model === curr:
+          output = `Current model: \`${curr}\``;
+          break;
+        case userIsAdmin:
+          if (isPerChannelEnabled) {
+            ctx.setProviderModelForChannel(interaction.channelId, model);
+          } else {
+            ctx.setGlobalProviderModel(model);
+          }
+          output = `Model switched to: \`${model}\``;
+          ctx.logger.logInfo(output);
+          break;
+        default:
+          output = "You don't have permission to change the model.";
+          break;
+      }
     }
 
     await interaction.reply({

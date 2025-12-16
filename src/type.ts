@@ -13,6 +13,7 @@ export type Config = {
   allow_dms?: boolean;
   debug_message?: boolean;
   stats_for_nerds?: boolean;
+  per_channel_model?: boolean;
   experimental_overflow_splitting?: boolean;
   permissions: {
     users: {

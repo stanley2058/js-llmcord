@@ -66,8 +66,6 @@ const VISION_MODEL_TAGS = [
   "vl",
 ] as const;
 
-const EMBED_COLOR_COMPLETE = Colors.Blue;
-
 const Warning = {
   maxText: "⚠️ Exceeding max text length per message.",
   maxImages: "⚠️ Exceeding max images per message.",
@@ -84,9 +82,62 @@ type JSONLike =
   | JSONLike[]
   | { [k: string]: JSONLike };
 
+export type ModelChannelRef = {
+  id: string;
+  parentId?: string | null;
+};
+
+/**
+ * Resolve the effective provider model for a Discord channel (per-channel mode).
+ * Logic:
+ * - If channel has a parentId (is a thread), check for thread override first
+ * - If no thread override but has parentId, check for parent channel override
+ * - If no override, use default model
+ */
+export function getEffectiveProviderModelPerChannel(
+  channel: ModelChannelRef,
+  overrides: Map<string, string>,
+  defaultModel: string,
+): string {
+  if (channel.parentId) {
+    const threadOverride = overrides.get(channel.id);
+    if (threadOverride) return threadOverride;
+
+    const parentOverride = overrides.get(channel.parentId);
+    if (parentOverride) return parentOverride;
+
+    return defaultModel;
+  }
+
+  return overrides.get(channel.id) ?? defaultModel;
+}
+
+/**
+ * Resolve the effective provider model based on configuration mode.
+ * - If per_channel_model is enabled: uses channel overrides with thread inheritance
+ * - If per_channel_model is disabled: returns global model (legacy behavior)
+ */
+export function getEffectiveProviderModel(
+  channel: ModelChannelRef,
+  perChannelModeEnabled: boolean,
+  perChannelOverrides: Map<string, string>,
+  defaultModel: string,
+  globalModel: string,
+): string {
+  return perChannelModeEnabled
+    ? getEffectiveProviderModelPerChannel(
+        channel,
+        perChannelOverrides,
+        defaultModel,
+      )
+    : globalModel;
+}
+
 export class DiscordOperator {
   private client: Client;
-  private curProviderModel = "openai/gpt-4o";
+  private defaultProviderModel = "openai/gpt-4o";
+  private globalProviderModel = "openai/gpt-4o"; // Used when per_channel_model is disabled (legacy mode)
+  private channelProviderModelOverrides = new Map<string, string>();
   private toolManager: ToolManager;
   private cachedConfig: Config = {} as Config;
   private modelMessageOperator = new ModelMessageOperator();
@@ -130,8 +181,9 @@ export class DiscordOperator {
     this.logger.setLogLevel(config.log_level ?? "info");
 
     this.cachedConfig = config;
-    this.curProviderModel =
-      Object.keys(config.models || {})[0] ?? "openai/gpt-4o";
+    const firstModel = Object.keys(config.models || {})[0] ?? "openai/gpt-4o";
+    this.defaultProviderModel = firstModel;
+    this.globalProviderModel = firstModel;
 
     await this.client.login(config.bot_token);
     await this.toolManager.init();
@@ -178,9 +230,22 @@ export class DiscordOperator {
         this.cachedConfig = config;
       },
       getCachedConfig: () => this.cachedConfig,
-      getCurProviderModel: () => this.curProviderModel,
-      setCurProviderModel: (model: string) => {
-        this.curProviderModel = model;
+      getProviderModelForChannel: (channel: {
+        id: string;
+        parentId?: string | null;
+      }) =>
+        getEffectiveProviderModel(
+          channel,
+          this.cachedConfig.per_channel_model ?? false,
+          this.channelProviderModelOverrides,
+          this.defaultProviderModel,
+          this.globalProviderModel,
+        ),
+      setProviderModelForChannel: (channelId: string, model: string) => {
+        this.channelProviderModelOverrides.set(channelId, model);
+      },
+      setGlobalProviderModel: (model: string) => {
+        this.globalProviderModel = model;
       },
       toolManager: this.toolManager,
       cancellationMap: this.cancellationMap,
@@ -204,9 +269,15 @@ export class DiscordOperator {
       channelIds,
     });
     if (!canRespond) return false;
-    const { provider, model, gatewayAdapter } = parseProviderModelString(
-      this.curProviderModel,
+    const effectiveModel = getEffectiveProviderModel(
+      msg.channel,
+      this.cachedConfig.per_channel_model ?? false,
+      this.channelProviderModelOverrides,
+      this.defaultProviderModel,
+      this.globalProviderModel,
     );
+    const { provider, model, gatewayAdapter } =
+      parseProviderModelString(effectiveModel);
     const providers = await getProvidersFromConfig();
     if (!providers[provider]) {
       this.logger.logError(`Configuration not found for provider: ${provider}`);
@@ -240,16 +311,23 @@ export class DiscordOperator {
       provider,
       model,
       gatewayAdapter,
+      effectiveModel,
     };
   }
 
   private async prepareStreamOptions(msg: Message) {
     const prepared = await this.prepareMessageCreate(msg);
     if (!prepared) return false;
-    const { modelInstance, isAnthropic, provider, gatewayAdapter } = prepared;
+    const {
+      modelInstance,
+      isAnthropic,
+      provider,
+      gatewayAdapter,
+      effectiveModel,
+    } = prepared;
 
     let { messages, userWarnings, currentMessageImageIds } =
-      await this.buildMessages(msg);
+      await this.buildMessages(msg, effectiveModel);
 
     const usePlainResponses = this.cachedConfig.use_plain_responses ?? false;
     let warnEmbed: EmbedBuilder | null = null;
@@ -263,7 +341,7 @@ export class DiscordOperator {
       }
     }
 
-    const params = this.cachedConfig.models[this.curProviderModel];
+    const params = this.cachedConfig.models[effectiveModel];
     const {
       tools: useTools,
       anthropic_cache_control,
@@ -375,6 +453,7 @@ export class DiscordOperator {
       usePlainResponses,
       warnEmbed,
       anthropicCacheControl,
+      effectiveModel,
     };
   }
 
@@ -433,6 +512,7 @@ export class DiscordOperator {
       usePlainResponses,
       warnEmbed,
       anthropicCacheControl,
+      effectiveModel,
     } = options;
 
     const typingInterval = setInterval(() => this.sendTyping(msg), 1000 * 5);
@@ -444,7 +524,7 @@ export class DiscordOperator {
           ctx: {
             logger: this.logger,
             config: this.cachedConfig,
-            curProviderModel: this.curProviderModel,
+            curProviderModel: effectiveModel,
             safeEdit: this.safeEdit.bind(this),
             logStreamWarning: this.logStreamWarning.bind(this),
             logStreamFinishReason: this.logStreamFinishReason.bind(this),
@@ -511,8 +591,8 @@ export class DiscordOperator {
     return true;
   }
 
-  private async buildMessages(msg: Message) {
-    const params = this.cachedConfig.models[this.curProviderModel];
+  private async buildMessages(msg: Message, effectiveModel: string) {
+    const params = this.cachedConfig.models[effectiveModel];
     const { tools: useTools } = params ?? {};
     const toolsDisabledForModel = useTools === false;
     const maxMessages = this.cachedConfig.max_messages ?? 25;
@@ -543,7 +623,7 @@ export class DiscordOperator {
           message,
           userWarnings: uw,
           imageIds,
-        } = await this.messageToModelMessages(currMsg);
+        } = await this.messageToModelMessages(currMsg, effectiveModel);
 
         if (message) {
           messages.push(message);
@@ -615,12 +695,12 @@ export class DiscordOperator {
     return { messages, userWarnings, currentMessageImageIds };
   }
 
-  private async messageToModelMessages(msg: Message) {
+  private async messageToModelMessages(msg: Message, effectiveModel: string) {
     const visionModels = (VISION_MODEL_TAGS as readonly string[]).concat(
       this.cachedConfig.additional_vision_models || [],
     );
     const acceptImages = visionModels.some((t) =>
-      this.curProviderModel.toLowerCase().includes(t),
+      effectiveModel.toLowerCase().includes(t),
     );
     const maxText = this.cachedConfig.max_text ?? 100000;
     const maxImages = acceptImages ? (this.cachedConfig.max_images ?? 5) : 0;
