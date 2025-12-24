@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import {
   collapseLeadingSystemMessages,
@@ -13,13 +13,17 @@ describe("anthropic cache helpers", () => {
   test("returns null when cache disabled", () => {
     expect(getAnthropicCacheControlFromModelConfig(undefined)).toBeNull();
     expect(
-      getAnthropicCacheControlFromModelConfig({ anthropic_cache_control: false }),
+      getAnthropicCacheControlFromModelConfig({
+        anthropic_cache_control: false,
+      }),
     ).toBeNull();
   });
 
   test("returns ephemeral when enabled", () => {
     expect(
-      getAnthropicCacheControlFromModelConfig({ anthropic_cache_control: true }),
+      getAnthropicCacheControlFromModelConfig({
+        anthropic_cache_control: true,
+      }),
     ).toEqual({ type: "ephemeral" });
   });
 
@@ -48,7 +52,9 @@ describe("anthropic cache helpers", () => {
 
   test("patches system message providerOptions", () => {
     const msg = { role: "system", content: "x" } as const;
-    const patched = withAnthropicMessageCacheControl(msg, { type: "ephemeral" });
+    const patched = withAnthropicMessageCacheControl(msg, {
+      type: "ephemeral",
+    });
     expect((patched as any).providerOptions?.anthropic?.cacheControl).toEqual({
       type: "ephemeral",
     });

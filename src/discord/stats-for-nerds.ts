@@ -14,64 +14,45 @@ function lastPathSegment(providerModel: string): string {
   return lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean;
 }
 
-export function buildStatsForNerdsLogLine({
-  providerModel,
-  totalUsage,
-  ttftSeconds,
-  totalSeconds,
-}: {
+export function buildStatsForNerdsLogLine(input: {
   providerModel: string;
   totalUsage: LanguageModelUsage | null;
   ttftSeconds: number | null;
   totalSeconds: number | null;
 }): string {
-  const model = lastPathSegment(providerModel);
-
-  const inputTokens = totalUsage?.inputTokens;
-  const cachedInputTokens = totalUsage?.cachedInputTokens;
-  const outputTokens = totalUsage?.outputTokens;
-  const reasoningTokens = totalUsage?.reasoningTokens;
-
+  const { model, tokenParts, ttft, tps } = buildStatsForNerds(input);
   const parts: string[] = [`[M]: ${model}`];
-
-  const tokenParts: string[] = [];
-  if (typeof inputTokens === "number") {
-    const cachedNote =
-      typeof cachedInputTokens === "number"
-        ? ` (C: ${formatNumber(cachedInputTokens)})`
-        : "";
-    tokenParts.push(`↑${formatNumber(inputTokens)}${cachedNote}`);
-  }
-  if (typeof outputTokens === "number") {
-    const reasoningNote =
-      typeof reasoningTokens === "number"
-        ? ` (R: ${formatNumber(reasoningTokens)})`
-        : "";
-    tokenParts.push(`↓${formatNumber(outputTokens)}${reasoningNote}`);
-  }
-  if (tokenParts.length) {
-    parts.push(`[T]: ${tokenParts.join(" ")}`);
-  }
-
-  const ttft = toFixedIfNumber(ttftSeconds, 1);
+  if (tokenParts.length > 0) parts.push(`[T]: ${tokenParts.join(" ")}`);
   if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
-
-  const totalOutputTokens =
-    (typeof outputTokens === "number" ? outputTokens : 0) +
-    (typeof reasoningTokens === "number" ? reasoningTokens : 0);
-  const tps =
-    totalOutputTokens > 0 &&
-    typeof totalSeconds === "number" &&
-    totalSeconds > 0
-      ? totalOutputTokens / totalSeconds
-      : null;
-  const tpsFixed = toFixedIfNumber(tps, 1);
-  if (tpsFixed !== null) parts.push(`[TPS]: ${tpsFixed}`);
+  if (tps !== null) parts.push(`[TPS]: ${tps}`);
 
   return parts.join("; ");
 }
 
-export function buildStatsForNerdsField({
+export function buildStatsForNerdsField(input: {
+  providerModel: string;
+  totalUsage: LanguageModelUsage | null;
+  ttftSeconds: number | null;
+  totalSeconds: number | null;
+}): { name: string; value: string; inline: false } | null {
+  const { model, tokenParts, ttft, tps } = buildStatsForNerds(input);
+  const parts: string[] = [`[M]: ${model}`];
+  if (tokenParts.length > 0) parts.push(`[T]: ${tokenParts.join(" ")}`);
+  if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
+  if (tps !== null) parts.push(`[TPS]: ${tps}`);
+
+  if (parts.length <= 1) return null;
+
+  let value = `*${parts.join("; ")}*`;
+  const maxLength = 1024;
+  const overflow = "...*";
+  if (value.length > maxLength) {
+    value = value.slice(0, maxLength - overflow.length) + overflow;
+  }
+  return { name: " ", value, inline: false };
+}
+
+function buildStatsForNerds({
   providerModel,
   totalUsage,
   ttftSeconds,
@@ -81,22 +62,29 @@ export function buildStatsForNerdsField({
   totalUsage: LanguageModelUsage | null;
   ttftSeconds: number | null;
   totalSeconds: number | null;
-}): { name: string; value: string; inline: false } | null {
+}) {
   const model = lastPathSegment(providerModel);
 
   const inputTokens = totalUsage?.inputTokens;
-  const cachedInputTokens = totalUsage?.cachedInputTokens;
+  const { cacheReadTokens, cacheWriteTokens, noCacheTokens } =
+    totalUsage?.inputTokenDetails ?? {};
   const outputTokens = totalUsage?.outputTokens;
-  const reasoningTokens = totalUsage?.reasoningTokens;
-
-  const parts: string[] = [`[M]: ${model}`];
+  const { reasoningTokens } = totalUsage?.outputTokenDetails ?? {};
 
   const tokenParts: string[] = [];
   if (typeof inputTokens === "number") {
-    const cachedNote =
-      typeof cachedInputTokens === "number"
-        ? ` (C: ${formatNumber(cachedInputTokens)})`
-        : "";
+    const cachedNotes: string[] = [];
+    if (cacheReadTokens) {
+      cachedNotes.push(`CR: ${formatNumber(cacheReadTokens)}`);
+    }
+    if (cacheWriteTokens) {
+      cachedNotes.push(`CW: ${formatNumber(cacheWriteTokens)}`);
+    }
+    if (noCacheTokens) {
+      cachedNotes.push(`NC: ${formatNumber(noCacheTokens)}`);
+    }
+
+    const cachedNote = cachedNotes.length ? ` (${cachedNotes.join("; ")})` : "";
     tokenParts.push(`↑${formatNumber(inputTokens)}${cachedNote}`);
   }
   if (typeof outputTokens === "number") {
@@ -106,16 +94,10 @@ export function buildStatsForNerdsField({
         : "";
     tokenParts.push(`↓${formatNumber(outputTokens)}${reasoningNote}`);
   }
-  if (tokenParts.length) {
-    parts.push(`[T]: ${tokenParts.join(" ")}`);
-  }
 
   const ttft = toFixedIfNumber(ttftSeconds, 1);
-  if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
 
-  const totalOutputTokens =
-    (typeof outputTokens === "number" ? outputTokens : 0) +
-    (typeof reasoningTokens === "number" ? reasoningTokens : 0);
+  const totalOutputTokens = outputTokens ?? 0;
   const tps =
     totalOutputTokens > 0 &&
     typeof totalSeconds === "number" &&
@@ -123,11 +105,11 @@ export function buildStatsForNerdsField({
       ? totalOutputTokens / totalSeconds
       : null;
   const tpsFixed = toFixedIfNumber(tps, 1);
-  if (tpsFixed !== null) parts.push(`[TPS]: ${tpsFixed}`);
 
-  if (parts.length <= 1) return null;
-
-  let value = `*${parts.join("; ")}*`;
-  if (value.length > 1024) value = value.slice(0, 1021) + "...*";
-  return { name: " ", value, inline: false };
+  return {
+    model,
+    tokenParts,
+    ttft,
+    tps: tpsFixed,
+  };
 }
