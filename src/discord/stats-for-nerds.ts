@@ -93,9 +93,7 @@ function buildStatsForNerds({
 
   const ttft = toFixedIfNumber(ttftSeconds, 1);
 
-  const totalOutputTokens =
-    (typeof outputTokens === "number" ? outputTokens : 0) +
-    (typeof reasoningTokens === "number" ? reasoningTokens : 0);
+  const totalOutputTokens = outputTokens ?? 0;
   const tps =
     totalOutputTokens > 0 &&
     typeof totalSeconds === "number" &&
