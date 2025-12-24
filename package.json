@@ -14,12 +14,13 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^2.0.56",
-    "@ai-sdk/groq": "^2.0.33",
+    "@ai-sdk/anthropic": "^3.0.1",
+    "@ai-sdk/google": "^3.0.1",
+    "@ai-sdk/groq": "^3.0.1",
     "@ai-sdk/mcp": "^1.0.1",
-    "@ai-sdk/openai": "^2.0.88",
-    "@ai-sdk/openai-compatible": "^1.0.29",
-    "@ai-sdk/xai": "^2.0.42",
+    "@ai-sdk/openai": "^3.0.1",
+    "@ai-sdk/openai-compatible": "^2.0.1",
+    "@ai-sdk/xai": "^3.0.1",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@openrouter/ai-sdk-provider": "^1.5.4",
     "ai": "^6.0.3",
