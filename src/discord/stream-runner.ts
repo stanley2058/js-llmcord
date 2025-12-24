@@ -238,16 +238,6 @@ export async function runStreamAttempt({
       }
     }
 
-    const reasoningMessages: Array<{ text: string }> = [];
-    for (const m of resp.messages) {
-      if (m.role !== "assistant") continue;
-      if (typeof m.content === "string") continue;
-      const parts = m.content.filter(
-        (p: { type: string }) => p.type === "reasoning",
-      );
-      if (parts.length === 0) continue;
-      reasoningMessages.push(...(parts as Array<{ text: string }>));
-    }
     const reasoningResp = await reasoningText;
 
     await ctx.modelMessageOperator.create({
