@@ -101,7 +101,8 @@ export async function runStreamAttempt({
           },
         });
 
-    const { textStream, finishReason, response, reasoning, warnings } = stream;
+    const { textStream, finishReason, response, reasoningText, warnings } =
+      stream;
 
     const requestStartMs = performance.now();
     let firstTokenMs: number | null = null;
@@ -247,13 +248,7 @@ export async function runStreamAttempt({
       if (parts.length === 0) continue;
       reasoningMessages.push(...(parts as Array<{ text: string }>));
     }
-    const reasoningResp = await reasoning;
-
-    const reasoningSummary = (
-      reasoningResp.length > 0 ? reasoningResp : reasoningMessages
-    )
-      .map((r) => r.text)
-      .join("\n\n");
+    const reasoningResp = await reasoningText;
 
     await ctx.modelMessageOperator.create({
       messageId: discordMessageCreated,
@@ -261,13 +256,13 @@ export async function runStreamAttempt({
       messages: stripped,
       imageIds:
         currentMessageImageIds.length > 0 ? currentMessageImageIds : undefined,
-      reasoningSummary,
+      reasoningSummary: reasoningResp,
     });
 
     {
       const row = new ActionRowBuilder<ButtonBuilder>();
 
-      if (reasoningSummary) {
+      if (reasoningResp) {
         row.addComponents(
           new ButtonBuilder()
             .setCustomId("show_reasoning_modal")

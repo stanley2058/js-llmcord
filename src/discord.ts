@@ -3,7 +3,6 @@ import {
   ChannelType,
   Client,
   Collection,
-  Colors,
   ComponentType,
   EmbedBuilder,
   GatewayIntentBits,
@@ -312,9 +311,9 @@ export class DiscordOperator {
         this.cachedConfig.providers.openai.api_schema === "responses"
           ? "responses"
           : "completion";
-      modelInstance = providers.openai![api](model);
+      modelInstance = providers.openai![api](model) as LanguageModel;
     } else {
-      modelInstance = providers[provider]!(model);
+      modelInstance = providers[provider]!(model) as LanguageModel;
     }
 
     return {
@@ -478,14 +477,17 @@ export class DiscordOperator {
     this.logger.logWarn("Warnings from model provider:");
     for (const warn of warns) {
       switch (warn.type) {
-        case "unsupported-setting":
+        case "unsupported":
           this.logger.logWarn(
-            `Unsupported setting: ${warn.setting}`,
+            `Unsupported feature: ${warn.feature}`,
             warn.details,
           );
           break;
-        case "unsupported-tool":
-          this.logger.logWarn(`Unsupported tool: ${warn.tool}`, warn.details);
+        case "compatibility":
+          this.logger.logWarn(
+            `Compatible mode feature: ${warn.feature}`,
+            warn.details,
+          );
           break;
         case "other":
           this.logger.logWarn(warn.message);
@@ -510,7 +512,6 @@ export class DiscordOperator {
         this.logger.logWarn("blocked by content filter");
         break;
       case "other":
-      case "unknown":
         this.logger.logInfo(`stream finished with unknown reason (${reason})`);
         break;
     }

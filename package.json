@@ -12,24 +12,24 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^2.0.45",
-    "@ai-sdk/groq": "^2.0.29",
+    "@ai-sdk/anthropic": "^2.0.56",
+    "@ai-sdk/groq": "^2.0.33",
     "@ai-sdk/mcp": "^0.0.8",
-    "@ai-sdk/openai": "^2.0.69",
-    "@ai-sdk/openai-compatible": "^1.0.27",
-    "@ai-sdk/xai": "^2.0.33",
-    "@modelcontextprotocol/sdk": "^1.22.0",
-    "@openrouter/ai-sdk-provider": "^1.2.3",
-    "ai": "^5.0.97",
-    "discord.js": "^14.25.0",
+    "@ai-sdk/openai": "^2.0.88",
+    "@ai-sdk/openai-compatible": "^1.0.29",
+    "@ai-sdk/xai": "^2.0.42",
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "@openrouter/ai-sdk-provider": "^1.5.4",
+    "ai": "^6.0.3",
+    "discord.js": "^14.25.1",
     "mdast-util-from-markdown": "^2.0.2",
     "mdast-util-gfm": "^3.1.0",
     "mdast-util-gfm-strikethrough": "^2.0.0",
     "mdast-util-to-markdown": "^2.1.2",
     "micromark-extension-gfm": "^3.0.0",
     "remend": "^1.0.1",
-    "superjson": "^2.2.5",
+    "superjson": "^2.2.6",
     "uploadthing": "^7.7.4",
-    "zod": "^4.1.12"
+    "zod": "^4.2.1"
   }
 }

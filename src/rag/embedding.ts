@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { getConfig } from "../config-parser";
 import { pg } from "./db";
-import z from "zod";
+import { z } from "zod/v3";
 import type { RagEmbedding } from "./type";
 import { getProvidersFromConfig } from "../model-routing";
 import { Logger } from "../logger";

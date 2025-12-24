@@ -60,7 +60,9 @@ export function maybeYieldBoundarySeparator(
 ): string {
   if (!nextChunk) return "";
   const nextFirstChar = nextChunk[0] ?? "";
-  return shouldInsertBoundarySeparator(prevLastChar, nextFirstChar) ? separator : "";
+  return shouldInsertBoundarySeparator(prevLastChar, nextFirstChar)
+    ? separator
+    : "";
 }
 
 function addUsage(
@@ -77,13 +79,34 @@ function addUsage(
   if (typeof addition.totalTokens === "number") {
     target.totalTokens = (target.totalTokens ?? 0) + addition.totalTokens;
   }
-  if (typeof addition.reasoningTokens === "number") {
-    target.reasoningTokens =
-      (target.reasoningTokens ?? 0) + addition.reasoningTokens;
+  if (addition.inputTokenDetails) {
+    if (typeof addition.inputTokenDetails.noCacheTokens === "number") {
+      target.inputTokenDetails.noCacheTokens =
+        (target.inputTokenDetails.noCacheTokens ?? 0) +
+        addition.inputTokenDetails.noCacheTokens;
+    }
+    if (typeof addition.inputTokenDetails.cacheReadTokens === "number") {
+      target.inputTokenDetails.cacheReadTokens =
+        (target.inputTokenDetails.cacheReadTokens ?? 0) +
+        addition.inputTokenDetails.cacheReadTokens;
+    }
+    if (typeof addition.inputTokenDetails.cacheWriteTokens === "number") {
+      target.inputTokenDetails.cacheWriteTokens =
+        (target.inputTokenDetails.cacheWriteTokens ?? 0) +
+        addition.inputTokenDetails.cacheWriteTokens;
+    }
   }
-  if (typeof addition.cachedInputTokens === "number") {
-    target.cachedInputTokens =
-      (target.cachedInputTokens ?? 0) + addition.cachedInputTokens;
+  if (addition.outputTokenDetails) {
+    if (typeof addition.outputTokenDetails.textTokens === "number") {
+      target.outputTokenDetails.textTokens =
+        (target.outputTokenDetails.textTokens ?? 0) +
+        addition.outputTokenDetails.textTokens;
+    }
+    if (typeof addition.outputTokenDetails.reasoningTokens === "number") {
+      target.outputTokenDetails.reasoningTokens =
+        (target.outputTokenDetails.reasoningTokens ?? 0) +
+        addition.outputTokenDetails.reasoningTokens;
+    }
   }
 }
 
@@ -126,12 +149,12 @@ export function streamTextWithCompatibleTools({
   const { promise: finishReason, resolve: resolveFinishReason } =
     Promise.withResolvers<FinishReason>();
 
-  const reasoningMessages: ReasoningOutput[] = [];
+  const reasoningMessages: string[] = [];
   const finalResponsesAccu: ModelMessage[] = [];
   const { promise: finalResponses, resolve: resolveFinalResponses } =
     Promise.withResolvers<{ messages: ModelMessage[] }>();
-  const { promise: reasoning, resolve: resolveReasoning } =
-    Promise.withResolvers<ReasoningOutput[]>();
+  const { promise: reasoningText, resolve: resolveReasoningText } =
+    Promise.withResolvers<string | undefined>();
   const { promise: warnings, resolve: resolveWarnings } = Promise.withResolvers<
     CallWarning[] | undefined
   >();
@@ -143,6 +166,15 @@ export function streamTextWithCompatibleTools({
     inputTokens: undefined,
     outputTokens: undefined,
     totalTokens: undefined,
+    inputTokenDetails: {
+      noCacheTokens: undefined,
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+    },
+    outputTokenDetails: {
+      textTokens: undefined,
+      reasoningTokens: undefined,
+    },
   };
 
   if (messages.length === 0) {
@@ -181,7 +213,7 @@ export function streamTextWithCompatibleTools({
         textStream,
         finishReason,
         response,
-        reasoning,
+        reasoningText,
         warnings,
         totalUsage: callTotalUsage,
       } = streamText({
@@ -246,7 +278,9 @@ export function streamTextWithCompatibleTools({
       const { messages: respMessages } = await response;
       messages.push(...respMessages);
       finalResponsesAccu.push(...respMessages);
-      reasoningMessages.push(...(await reasoning));
+
+      const reasoning = await reasoningText;
+      if (reasoning) reasoningMessages.push(reasoning);
       accumulatedWarnings.push(...((await warnings) || []));
 
       addUsage(totalUsageAccu, await callTotalUsage);
@@ -259,7 +293,7 @@ export function streamTextWithCompatibleTools({
       const [, toolName, payload] = toolMatch ?? [];
       const tool = toolName && tools?.[toolName];
       if (!toolName || !tool || !tool.execute) {
-        resolveReasoning(reasoningMessages);
+        resolveReasoningText(reasoningMessages.join("\n\n"));
         resolveWarnings(
           accumulatedWarnings.length ? accumulatedWarnings : undefined,
         );
@@ -327,7 +361,7 @@ export function streamTextWithCompatibleTools({
     textStream: textStreamOut(),
     finishReason,
     response: finalResponses,
-    reasoning,
+    reasoningText,
     warnings,
     totalUsage,
   };
