@@ -44,7 +44,11 @@ export function buildStatsForNerdsField(input: {
   if (parts.length <= 1) return null;
 
   let value = `*${parts.join("; ")}*`;
-  if (value.length > 1024) value = value.slice(0, 1021) + "...*";
+  const maxLength = 1024;
+  const overflow = "...*";
+  if (value.length > maxLength) {
+    value = value.slice(0, maxLength - overflow.length) + overflow;
+  }
   return { name: " ", value, inline: false };
 }
 
