@@ -22,7 +22,7 @@ export function buildStatsForNerdsLogLine(input: {
 }): string {
   const { model, tokenParts, ttft, tps } = buildStatsForNerds(input);
   const parts: string[] = [`[M]: ${model}`];
-  parts.push(`[T]: ${tokenParts.join(" ")}`);
+  if (tokenParts.length > 0) parts.push(`[T]: ${tokenParts.join(" ")}`);
   if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
   if (tps !== null) parts.push(`[TPS]: ${tps}`);
 
@@ -37,7 +37,7 @@ export function buildStatsForNerdsField(input: {
 }): { name: string; value: string; inline: false } | null {
   const { model, tokenParts, ttft, tps } = buildStatsForNerds(input);
   const parts: string[] = [`[M]: ${model}`];
-  parts.push(`[T]: ${tokenParts.join(" ")}`);
+  if (tokenParts.length > 0) parts.push(`[T]: ${tokenParts.join(" ")}`);
   if (ttft !== null) parts.push(`[TTFT]: ${ttft}s`);
   if (tps !== null) parts.push(`[TPS]: ${tps}`);
 
