@@ -3,7 +3,9 @@
   "module": "index.ts",
   "type": "module",
   "scripts": {
-    "test": "bun test"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test",
+    "ci": "bun run typecheck && bun run test"
   },
   "devDependencies": {
     "@types/bun": "latest"
@@ -14,7 +16,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",
     "@ai-sdk/groq": "^2.0.33",
-    "@ai-sdk/mcp": "^0.0.8",
+    "@ai-sdk/mcp": "^1.0.1",
     "@ai-sdk/openai": "^2.0.88",
     "@ai-sdk/openai-compatible": "^1.0.29",
     "@ai-sdk/xai": "^2.0.42",

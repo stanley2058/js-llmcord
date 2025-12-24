@@ -1,5 +1,5 @@
 import type { Tool } from "ai";
-import { experimental_createMCPClient as createMCPClient } from "@ai-sdk/mcp";
+import { createMCPClient } from "@ai-sdk/mcp";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -138,7 +138,7 @@ export class ToolManager {
     }
 
     return success.reduce(
-      (acc, tool) => ({ ...acc, ...tool }),
+      (acc, tool) => ({ ...acc, ...tool }) as Record<string, Tool>,
       {} as Record<string, Tool>,
     );
   }
