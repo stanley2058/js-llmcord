@@ -23,6 +23,7 @@
     "@ai-sdk/xai": "^3.0.1",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@openrouter/ai-sdk-provider": "^1.5.4",
+    "@stanley2058/simple-module-logger": "^0.0.2",
     "ai": "^6.0.3",
     "discord.js": "^14.25.1",
     "mdast-util-from-markdown": "^2.0.2",

@@ -6,7 +6,6 @@ import {
   type JSONValue,
   type LanguageModelUsage,
   type ModelMessage,
-  type ReasoningOutput,
   type ToolResultPart,
 } from "ai";
 
