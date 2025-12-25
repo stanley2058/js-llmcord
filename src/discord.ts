@@ -492,6 +492,10 @@ export class DiscordOperator {
         case "other":
           this.logger.logWarn(warn.message);
           break;
+        // for compatibility reasons, some adapters still return old warning types
+        default:
+          this.logger.logWarn("Unknown warning type", warn);
+          break;
       }
     }
   }
