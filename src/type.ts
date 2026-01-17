@@ -12,7 +12,7 @@ export type Config = {
   use_plain_responses?: boolean;
   allow_dms?: boolean;
   debug_message?: boolean;
-  stats_for_nerds?: boolean;
+  stats_for_nerds?: boolean | { verbose?: boolean };
   per_channel_model?: boolean;
   experimental_overflow_splitting?: boolean;
   permissions: {

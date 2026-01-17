@@ -51,7 +51,7 @@ max_steps: 10 # Max tool call iterations
 
 # Features
 per_channel_model: false
-stats_for_nerds: false # Show token usage in responses
+stats_for_nerds: false # Show token usage in responses (or { verbose: true })
 use_plain_responses: false
 
 # Providers (configure API keys)
