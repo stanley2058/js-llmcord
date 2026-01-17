@@ -2,9 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { z } from "zod/v3";
 
 import {
-  buildInputCompositionFooterLine,
+  buildInputCompositionLine,
   estimateInputCompositionChars,
 } from "../src/discord/input-composition";
+
 
 describe("input-composition", () => {
   it("computes stable percentages for single-call prompts", () => {
@@ -28,7 +29,7 @@ describe("input-composition", () => {
     expect(chars.toolDefsChars).toBe(0);
     expect(chars.toolResultChars).toBe(0);
 
-    const line = buildInputCompositionFooterLine({
+    const line = buildInputCompositionLine({
       statsForNerds: { verbose: true },
       totalUsage: { inputTokens: 100 } as any,
       initialMessages,
