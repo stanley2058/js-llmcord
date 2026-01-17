@@ -289,7 +289,7 @@ function computePercentages(chars: {
   return map;
 }
 
-export function buildInputCompositionFooterLine(input: {
+export function buildInputCompositionLine(input: {
   statsForNerds: Config["stats_for_nerds"];
   totalUsage: LanguageModelUsage | null;
   initialMessages: ModelMessage[];

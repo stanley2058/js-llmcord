@@ -30,7 +30,7 @@ import {
   buildStatsForNerdsLogLine,
 } from "./stats-for-nerds";
 import {
-  buildInputCompositionFooterLine,
+  buildInputCompositionLine,
   getStatsForNerdsOptions,
 } from "./input-composition";
 
@@ -212,11 +212,21 @@ export async function runStreamAttempt({
     const resp = await response;
 
     if (statsForNerds.enabled && !usePlainResponses) {
+      const icLine = buildInputCompositionLine({
+        statsForNerds: ctx.config.stats_for_nerds,
+        totalUsage,
+        initialMessages: (opts.messages as any) ?? [],
+        responseMessages: resp.messages,
+        tools: opts.tools,
+        compatibleMode,
+      });
+
       const field = buildStatsForNerdsField({
         providerModel: ctx.curProviderModel,
         totalUsage,
         ttftSeconds,
         totalSeconds,
+        extraLine: icLine,
       });
 
       if (field) {
@@ -228,21 +238,6 @@ export async function runStreamAttempt({
         emb.setDescription(desc || "*<empty_string>*");
         emb.setColor(3447003);
         emb.addFields(field);
-
-        const footerLine = buildInputCompositionFooterLine({
-          statsForNerds: ctx.config.stats_for_nerds,
-          totalUsage,
-          initialMessages: (opts.messages as any) ?? [],
-          responseMessages: resp.messages,
-          tools: opts.tools,
-          compatibleMode,
-        });
-
-        if (footerLine) {
-          const existing = emb.data.footer?.text ?? "";
-          const next = existing ? `${existing}\n${footerLine}` : footerLine;
-          emb.setFooter({ text: next });
-        }
 
         await ctx.safeEdit(lastMsg, { embeds: [emb] });
       }

@@ -34,6 +34,7 @@ export function buildStatsForNerdsField(input: {
   totalUsage: LanguageModelUsage | null;
   ttftSeconds: number | null;
   totalSeconds: number | null;
+  extraLine?: string | null;
 }): { name: string; value: string; inline: false } | null {
   const { model, tokenParts, ttft, tps } = buildStatsForNerds(input);
   const parts: string[] = [`[M]: ${model}`];
@@ -43,7 +44,8 @@ export function buildStatsForNerdsField(input: {
 
   if (parts.length <= 1) return null;
 
-  let value = `*${parts.join("; ")}*`;
+  const extra = input.extraLine ? `; ${input.extraLine}` : "";
+  let value = `*${parts.join("; ")}${extra}*`;
   const maxLength = 1024;
   const overflow = "...*";
   if (value.length > maxLength) {
