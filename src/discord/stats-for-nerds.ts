@@ -44,7 +44,7 @@ export function buildStatsForNerdsField(input: {
 
   if (parts.length <= 1) return null;
 
-  const extra = input.extraLine ? `\n${input.extraLine}` : "";
+  const extra = input.extraLine ? `; ${input.extraLine}` : "";
   let value = `*${parts.join("; ")}${extra}*`;
   const maxLength = 1024;
   const overflow = "...*";
