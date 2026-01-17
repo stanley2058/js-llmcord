@@ -14,7 +14,7 @@ max_retry: 3
 use_plain_responses: false
 allow_dms: true
 debug_message: false
-stats_for_nerds: false
+stats_for_nerds: false # or { verbose: true }
 per_channel_model: false
 log_level: info # debug, info, warn, error
 

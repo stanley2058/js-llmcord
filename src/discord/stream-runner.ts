@@ -29,6 +29,10 @@ import {
   buildStatsForNerdsField,
   buildStatsForNerdsLogLine,
 } from "./stats-for-nerds";
+import {
+  buildInputCompositionFooterLine,
+  getStatsForNerdsOptions,
+} from "./input-composition";
 
 export type StreamAttemptContext = {
   logger: Logger;
@@ -191,8 +195,10 @@ export async function runStreamAttempt({
     ctx.logStreamWarning(await warnings);
     ctx.logStreamFinishReason(reason);
 
+    const statsForNerds = getStatsForNerdsOptions(ctx.config.stats_for_nerds);
+
     const totalUsage: LanguageModelUsage | null =
-      ctx.config.stats_for_nerds && "totalUsage" in stream
+      statsForNerds.enabled && "totalUsage" in stream
         ? (((await (stream as { totalUsage?: Promise<unknown> }).totalUsage) as
             | LanguageModelUsage
             | null
@@ -203,7 +209,9 @@ export async function runStreamAttempt({
       ctx.logger.logDebug(`Stream finished with reason: ${reason}`);
     }
 
-    if (ctx.config.stats_for_nerds && !usePlainResponses) {
+    const resp = await response;
+
+    if (statsForNerds.enabled && !usePlainResponses) {
       const field = buildStatsForNerdsField({
         providerModel: ctx.curProviderModel,
         totalUsage,
@@ -220,11 +228,26 @@ export async function runStreamAttempt({
         emb.setDescription(desc || "*<empty_string>*");
         emb.setColor(3447003);
         emb.addFields(field);
+
+        const footerLine = buildInputCompositionFooterLine({
+          statsForNerds: ctx.config.stats_for_nerds,
+          totalUsage,
+          initialMessages: (opts.messages as any) ?? [],
+          responseMessages: resp.messages,
+          tools: opts.tools,
+          compatibleMode,
+        });
+
+        if (footerLine) {
+          const existing = emb.data.footer?.text ?? "";
+          const next = existing ? `${existing}\n${footerLine}` : footerLine;
+          emb.setFooter({ text: next });
+        }
+
         await ctx.safeEdit(lastMsg, { embeds: [emb] });
       }
     }
 
-    const resp = await response;
     const stripped = stripToolTraffic(resp.messages);
 
     if (ctx.config.tools?.include_summary) {
@@ -271,7 +294,7 @@ export async function runStreamAttempt({
       await ctx.safeEdit(lastMsg, { components: [row] });
     }
 
-    if (ctx.config.stats_for_nerds) {
+    if (statsForNerds.enabled) {
       ctx.logger.logInfo(
         buildStatsForNerdsLogLine({
           providerModel: ctx.curProviderModel,
