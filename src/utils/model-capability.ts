@@ -146,7 +146,7 @@ export function providerModelToModelsDevSpecifier(
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
 }
 
@@ -193,7 +193,12 @@ export class ModelCapability {
         }
 
         return record as ModelsDevRegistry;
-      })();
+      })().catch((err) => {
+        // If the initial fetch fails (including AbortError), don't permanently
+        // cache the rejected promise. Allow future callers to retry.
+        this.registryPromise = null;
+        throw err;
+      });
     }
 
     return await this.registryPromise;
@@ -265,8 +270,8 @@ export class ModelCapability {
     total += (inputTokens / 1_000_000) * info.cost.input;
     total += (outputTokens / 1_000_000) * info.cost.output;
 
-    const cacheReadTokens = usage.inputTokenDetails.cacheReadTokens ?? 0;
-    const cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens ?? 0;
+    const cacheReadTokens = usage.inputTokenDetails?.cacheReadTokens ?? 0;
+    const cacheWriteTokens = usage.inputTokenDetails?.cacheWriteTokens ?? 0;
 
     if (info.cost.cache_read !== undefined) {
       total += (cacheReadTokens / 1_000_000) * info.cost.cache_read;
