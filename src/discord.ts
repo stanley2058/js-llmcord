@@ -720,7 +720,12 @@ export class DiscordOperator {
   }
 
   private async messageToModelMessages(msg: Message, effectiveModel: string) {
-    const acceptImages = await this.canModelSeeImages(effectiveModel);
+    const hasImageAttachments = [...msg.attachments.values()].some((att) =>
+      att.contentType?.startsWith("image"),
+    );
+    const acceptImages = hasImageAttachments
+      ? await this.canModelSeeImages(effectiveModel)
+      : false;
     const maxText = this.cachedConfig.max_text ?? 100000;
     const maxImages = acceptImages ? (this.cachedConfig.max_images ?? 5) : 0;
 
