@@ -48,22 +48,10 @@ import {
   withAnthropicSystemMessageCacheControl,
   withAnthropicToolCacheControl,
 } from "./utils/anthropic-cache";
-
-const VISION_MODEL_TAGS = [
-  "claude",
-  "gemini",
-  "gemma",
-  "gpt-4",
-  "gpt-5",
-  "grok-4",
-  "llama",
-  "llava",
-  "mistral",
-  "o3",
-  "o4",
-  "vision",
-  "vl",
-] as const;
+import {
+  ModelCapability,
+  providerModelToModelsDevSpecifier,
+} from "./utils/model-capability";
 
 const Warning = {
   maxText: "⚠️ Exceeding max text length per message.",
@@ -144,6 +132,8 @@ export class DiscordOperator {
   private logger = new Logger({ module: "discord" });
   private statusInterval: NodeJS.Timeout | null = null;
   private cancellationMap = new Map<string, AbortController>();
+  private modelCapability = new ModelCapability();
+  private visionSupportCache = new Map<string, boolean>();
 
   constructor() {
     this.client = new Client({
@@ -196,6 +186,7 @@ export class DiscordOperator {
 
   private async clientReady() {
     this.cachedConfig = await getConfig();
+    this.visionSupportCache.clear();
     await ensureCommands({
       client: this.client,
       commands,
@@ -227,6 +218,7 @@ export class DiscordOperator {
       getConfig,
       setCachedConfig: (config: Config) => {
         this.cachedConfig = config;
+        this.visionSupportCache.clear();
       },
       getCachedConfig: () => this.cachedConfig,
       getProviderModelForChannel: (channel: {
@@ -728,12 +720,12 @@ export class DiscordOperator {
   }
 
   private async messageToModelMessages(msg: Message, effectiveModel: string) {
-    const visionModels = (VISION_MODEL_TAGS as readonly string[]).concat(
-      this.cachedConfig.additional_vision_models || [],
+    const hasImageAttachments = [...msg.attachments.values()].some((att) =>
+      att.contentType?.startsWith("image"),
     );
-    const acceptImages = visionModels.some((t) =>
-      effectiveModel.toLowerCase().includes(t),
-    );
+    const acceptImages = hasImageAttachments
+      ? await this.canModelSeeImages(effectiveModel)
+      : false;
     const maxText = this.cachedConfig.max_text ?? 100000;
     const maxImages = acceptImages ? (this.cachedConfig.max_images ?? 5) : 0;
 
@@ -917,6 +909,45 @@ export class DiscordOperator {
       this.logger.logError(e);
     }
     return { parent: null };
+  }
+
+  private async canModelSeeImages(providerModel: string): Promise<boolean> {
+    const cached = this.visionSupportCache.get(providerModel);
+    if (cached !== undefined) return cached;
+
+    // Explicit override.
+    if (/:vision$/i.test(providerModel)) {
+      this.visionSupportCache.set(providerModel, true);
+      return true;
+    }
+
+    // Escape hatch for custom / private providers not present in models.dev.
+    const extra = this.cachedConfig.additional_vision_models ?? [];
+    const lower = providerModel.toLowerCase();
+    if (extra.some((t) => lower.includes(String(t).toLowerCase()))) {
+      this.visionSupportCache.set(providerModel, true);
+      return true;
+    }
+
+    const spec = providerModelToModelsDevSpecifier(providerModel);
+    if (!spec) {
+      this.visionSupportCache.set(providerModel, false);
+      return false;
+    }
+
+    try {
+      const info = await this.modelCapability.resolve(spec);
+      const ok = Boolean(info.modalities?.input?.includes("image"));
+      this.visionSupportCache.set(providerModel, ok);
+      return ok;
+    } catch (e) {
+      this.logger.logDebug(
+        `[vision] capability lookup failed for '${spec}' (from '${providerModel}')`,
+      );
+      this.logger.logDebug(e);
+      this.visionSupportCache.set(providerModel, false);
+      return false;
+    }
   }
 
   private getChannelsAndRolesFromMessage(msg: Message) {
