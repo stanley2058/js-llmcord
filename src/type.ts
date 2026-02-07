@@ -41,7 +41,23 @@ export type Config = {
   rag?: {
     enable?: boolean;
     postgres_uri?: string;
-    embedding_model?: "text-embedding-3-small" | "text-embedding-ada-002";
+    /**
+     * Embedding model for RAG.
+     *
+     * Supports:
+     * - "text-embedding-3-small" (backwards-compatible, implies provider "openai")
+     * - "openai/text-embedding-3-small"
+     * - "<provider>/<model-id>" for any configured OpenAI-compatible provider.
+     */
+    embedding_model?: string;
+
+    /**
+     * Embedding vector dimensions.
+     *
+     * Required for non-OpenAI models.
+     * If omitted for known OpenAI embedding models, it defaults based on model id.
+     */
+    embedding_dimensions?: number;
   };
   system_prompt?: string | null;
   additional_headers?: {

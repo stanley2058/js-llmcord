@@ -102,13 +102,16 @@ tools:
 
 ### RAG (Optional)
 
-Requires PostgreSQL with pgvector and OpenAI API for embeddings:
+Requires PostgreSQL with pgvector and an embeddings provider.
+
+The embeddings provider can be OpenAI, or any OpenAI-compatible embeddings API (via `@ai-sdk/openai-compatible`).
 
 ```yaml
 rag:
   enable: true
   postgres_uri: "postgresql://user:pass@host:5432/db"
-  embedding_model: "text-embedding-3-small"
+  embedding_model: "openai/text-embedding-3-small" # or "text-embedding-3-small" (implies openai)
+  embedding_dimensions: 1536
 ```
 
 Adds tools: `rememberUserContext`, `recallUserContext`, `forgetUserContext`

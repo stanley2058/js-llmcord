@@ -137,11 +137,12 @@ tools:
         Authorization: Bearer <CONTEXT7_API_KEY>
 
 # (optional) RAG
-# You MUST have official OpenAI API base_url and api_key configured to use RAG
+# Requires a provider that supports embeddings (OpenAI or OpenAI-compatible embeddings API)
 rag:
   enable: false
   postgres_uri: "postgresql://js_llmcord:<password>@postgres-vector:5432/js_llmcord_rag?sslmode=disable"
-  embedding_model: "text-embedding-3-small" # or "text-embedding-ada-002"
+  embedding_model: "openai/text-embedding-3-small" # or "text-embedding-ada-002" (implies openai)
+  embedding_dimensions: 1536 # must match the DB schema (drop DB to change)
 
 additional_headers:
   user_id:
