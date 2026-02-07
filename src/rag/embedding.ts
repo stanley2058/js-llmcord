@@ -5,6 +5,32 @@ import { z } from "zod/v3";
 import type { RagEmbedding } from "./type";
 import { getProvidersFromConfig } from "../model-routing";
 import { Logger } from "../logger";
+import { getRagEmbeddingConfig } from "./config";
+
+function getEmbeddingModel(providerClient: unknown, modelId: string) {
+  const client = providerClient as {
+    embeddingModel?: (modelId: string) => unknown;
+    textEmbeddingModel?: (modelId: string) => unknown;
+    embedding?: (modelId: string) => unknown;
+  };
+
+  if (typeof client.embeddingModel === "function") {
+    return client.embeddingModel(modelId) as { doEmbed: Function };
+  }
+
+  if (typeof client.textEmbeddingModel === "function") {
+    return client.textEmbeddingModel(modelId) as { doEmbed: Function };
+  }
+
+  // OpenAI provider supports `embedding()`.
+  if (typeof client.embedding === "function") {
+    return client.embedding(modelId) as { doEmbed: Function };
+  }
+
+  throw new Error(
+    "[RAG] Embedding provider does not support embeddings (missing embeddingModel/textEmbeddingModel)",
+  );
+}
 
 export async function findRelevantContent(
   userId: string,
@@ -21,22 +47,25 @@ export async function findRelevantContent(
 ) {
   const config = await getConfig();
   const logger = new Logger({ module: "rag", logLevel: config.log_level });
-  if (!config.rag?.embedding_model) {
-    throw new Error("[RAG] embedding_model not supplied");
-  }
+  const { provider, model, dimensions } = getRagEmbeddingConfig(config);
 
-  const { openai } = await getProvidersFromConfig();
-  if (!openai) throw new Error("[RAG] OpenAI provider not configured");
+  const providers = await getProvidersFromConfig();
+  const embeddingProvider = (providers as Record<string, unknown>)[provider];
+  if (!embeddingProvider) {
+    throw new Error(`[RAG] Embedding provider not configured: ${provider}`);
+  }
 
   if (config.debug_message) logger.logDebug({ simThreshold, limit, type });
 
-  const { embeddings } = await openai
-    .embedding(config.rag.embedding_model)
-    .doEmbed({
-      values: [search],
-    });
+  const embeddingModel = getEmbeddingModel(embeddingProvider, model);
+  const { embeddings } = await (embeddingModel as any).doEmbed({ values: [search] });
 
   const embedding = embeddings[0]!;
+  if (embedding.length !== dimensions) {
+    throw new Error(
+      `[RAG] Embedding dimensions mismatch. Config expects ${dimensions}, model returned ${embedding.length} for ${provider}/${model}`,
+    );
+  }
   const vecLiteral = `[${embedding.join(",")}]`;
 
   const sql = await pg();
@@ -95,28 +124,34 @@ export async function insertEmbeddings(
 ) {
   const config = await getConfig();
   const logger = new Logger({ module: "rag", logLevel: config.log_level });
-  if (!config.rag?.embedding_model) {
-    throw new Error("[RAG] embedding_model not supplied");
+  const { provider, model, dimensions } = getRagEmbeddingConfig(config);
+
+  const providers = await getProvidersFromConfig();
+  const embeddingProvider = (providers as Record<string, unknown>)[provider];
+  if (!embeddingProvider) {
+    throw new Error(`[RAG] Embedding provider not configured: ${provider}`);
   }
-  const { openai } = await getProvidersFromConfig();
-  if (!openai) throw new Error("[RAG] OpenAI provider not configured");
 
   logger.logInfo(
     `[RAG] adding ${entries.length} information for user: ${userId}`,
   );
   if (config.debug_message) logger.logDebug(entries);
 
-  const { embeddings } = await openai
-    .embedding(config.rag.embedding_model)
-    .doEmbed({
-      values: entries.map((e) => e.summary),
-    });
+  const embeddingModel = getEmbeddingModel(embeddingProvider, model);
+  const { embeddings } = await (embeddingModel as any).doEmbed({
+    values: entries.map((e) => e.summary),
+  });
 
   const sql = await pg();
   await sql.begin(async (tx) => {
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i]!;
       const embedding = embeddings[i]!;
+      if (embedding.length !== dimensions) {
+        throw new Error(
+          `[RAG] Embedding dimensions mismatch. Config expects ${dimensions}, model returned ${embedding.length} for ${provider}/${model}`,
+        );
+      }
       const vecLiteral = `[${embedding.join(",")}]`;
       await tx`
         INSERT INTO embeddings (
