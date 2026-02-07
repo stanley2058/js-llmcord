@@ -3,6 +3,7 @@ import type { Config } from "../type";
 const OPENAI_EMBEDDING_DIMENSIONS_BY_MODEL: Record<string, number> = {
   "text-embedding-3-small": 1536,
   "text-embedding-ada-002": 1536,
+  "text-embedding-3-large": 3072,
 };
 
 export function parseRagEmbeddingModelString(value: string): {
